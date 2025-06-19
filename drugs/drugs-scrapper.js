@@ -33,14 +33,13 @@ async function scrapeDrugsForLetter(letter) {
     const $ = cheerio.load(data);
     const drugs = [];
 
-    // Look for the drug list - drugs.com typically uses a two-column layout
     const drugSelectors = [
-      ".ddc-list-column-2 a", // Two-column drug list
-      ".ddc-list a", // General drug list
-      ".contentBox a", // Content box links
-      "ul.ddc-list-unstyled a", // Unstyled list
-      'div[class*="list"] a', // Any div with "list" in class
-      'a[href*=".html"]', // Any HTML page link
+      ".ddc-list-column-2 a",
+      ".ddc-list a",
+      ".contentBox a",
+      "ul.ddc-list-unstyled a",
+      'div[class*="list"] a',
+      'a[href*=".html"]',
     ];
 
     let foundValidDrugs = false;
@@ -86,7 +85,6 @@ async function scrapeDrugsForLetter(letter) {
             !drugName.includes("»") &&
             !drugName.includes("«") &&
             !drugName.includes("...") &&
-            // Ensure it's a drug page URL
             href.includes(".html") &&
             (href.includes("/drug/") ||
               href.includes("/mtm/") ||
@@ -98,7 +96,6 @@ async function scrapeDrugsForLetter(letter) {
               // Also include direct drug pages (drugs.com/drugname.html)
               href.match(/drugs\.com\/[a-z0-9-]+\.html$/))
           ) {
-            // Make sure it's a full URL
             if (href.startsWith("/")) {
               href = "https://www.drugs.com" + href;
             }
@@ -141,7 +138,6 @@ async function scrapeDrugsForLetter(letter) {
       return [];
     }
 
-    // Remove duplicates based on drug name and URL
     const uniqueDrugs = drugs.filter(
       (drug, index, self) =>
         index ===
@@ -204,7 +200,7 @@ async function scrapeAllDrugs() {
       console.log(`   ❌ No drugs found for letter ${letter}`);
     }
 
-    // Add delay between requests to be respectful
+    // DOS
     if (i < letters.length - 1) {
       console.log(`⏳ Waiting 3 seconds before next letter...`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -221,24 +217,19 @@ async function scrapeAllDrugs() {
   console.log(`   ❌ Failed letters: ${totalErrors}`);
   console.log(`   📋 Total drugs found: ${totalFound}`);
 
-  // Final sort before returning
   return allDrugs.sort((a, b) => {
-    // First sort by letter
     if (a.letter !== b.letter) {
       return a.letter.localeCompare(b.letter);
     }
-    // Then sort by drug name within the same letter
     return a.drug.toLowerCase().localeCompare(b.drug.toLowerCase());
   });
 }
 
-// SINGLE Main execution - removed duplicates
 (async function main() {
   console.log("🔥 DRUGS.COM SCRAPER STARTING...");
   console.log("🎯 Target: Extract all drug names and URLs by letter");
 
   try {
-    // Clear the CSV file first to avoid appending to old data
     if (fs.existsSync("../CSV/drugs_all_letters.csv")) {
       fs.unlinkSync("../CSV/drugs_all_letters.csv");
       console.log("🧹 Cleared existing CSV file");
@@ -247,17 +238,13 @@ async function scrapeAllDrugs() {
     const allDrugs = await scrapeAllDrugs();
 
     if (allDrugs.length > 0) {
-      // Final sort and save - SINGLE WRITE OPERATION
       const sortedDrugs = allDrugs.sort((a, b) => {
-        // First sort by letter
         if (a.letter !== b.letter) {
           return a.letter.localeCompare(b.letter);
         }
-        // Then sort by drug name within the same letter
         return a.drug.toLowerCase().localeCompare(b.drug.toLowerCase());
       });
 
-      // Write all data at once (not append)
       await csvWriter.writeRecords(sortedDrugs);
 
       console.log(`\n🎉 SCRAPING COMPLETED SUCCESSFULLY!`);
@@ -267,7 +254,6 @@ async function scrapeAllDrugs() {
         `   💾 Data saved to: ../CSV/drugs_all_letters.csv (alphabetically sorted)`
       );
 
-      // Show final breakdown by letter
       const letterBreakdown = {};
       sortedDrugs.forEach((drug) => {
         letterBreakdown[drug.letter] = (letterBreakdown[drug.letter] || 0) + 1;
@@ -280,7 +266,6 @@ async function scrapeAllDrugs() {
           console.log(`   ${letter}: ${count} drugs`);
         });
 
-      // Show first few entries from each letter as sample
       console.log(`\n📋 Sample drugs from each letter:`);
       const seenLetters = new Set();
       sortedDrugs.forEach((drug) => {
@@ -290,7 +275,6 @@ async function scrapeAllDrugs() {
         }
       });
 
-      // Clean up any checkpoint files
       if (fs.existsSync("drugs_scraping_checkpoint.json")) {
         fs.unlinkSync("drugs_scraping_checkpoint.json");
         console.log(`🧹 Cleaned up checkpoint file`);
