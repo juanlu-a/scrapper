@@ -3,10 +3,10 @@ const createCsvWriter = require("csv-writer").createObjectCsvWriter;
 
 // Create CSV writer for the normalized data
 const csvWriter = createCsvWriter({
-  path: `./CSV/normalized_medical_data.csv`,
+  path: `../CSV/normalized_medical_data.csv`,
   header: [
     { id: "disease", title: "Disease" },
-    { id: "category", title: "Category" }, // diagnosis, tests, treatment, medications
+    { id: "category", title: "Category" },
     { id: "item_number", title: "Item Number" },
     { id: "content", title: "Content" },
     { id: "original_url", title: "Original URL" },
@@ -30,7 +30,7 @@ function splitContent(content, separator = "|") {
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
     .filter((item) => !item.toLowerCase().includes("error"))
-    .filter((item) => item.length > 10); // Filter out very short items that might be noise
+    .filter((item) => item.length > 10); //reduce noisy items
 }
 
 function normalizeData(scrapedData) {

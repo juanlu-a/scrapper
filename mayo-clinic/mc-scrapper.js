@@ -4,7 +4,7 @@ const createCsvWriter = require("csv-writer").createObjectCsvWriter;
 const fs = require("fs");
 
 const csvWriter = createCsvWriter({
-  path: `./CSV/diagnosis_treatment_data_full.csv`,
+  path: `../CSV/diagnosis_treatment_data_full.csv`,
   header: [
     { id: "disease", title: "Disease" },
     { id: "diagnosis", title: "Diagnosis" },
@@ -33,8 +33,53 @@ function extractTextFromSection(section, $) {
   return structuredText || text;
 }
 
+// New function to parse content into arrays
+function parseContentToArray(content) {
+  if (!content || content === "ERROR" || content === "NO_DIAGNOSIS_URL") {
+    return [];
+  }
+
+  // Split by common separators and clean up
+  return content
+    .split(/\|\||•|\n|;\s*(?=[A-Z])/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 5) // Filter out very short items
+    .slice(0, 20); // Limit to avoid extremely long arrays
+}
+
+// New function to save JSON data
+function saveJsonData(results) {
+  const jsonData = {};
+
+  results.forEach((result) => {
+    if (result && result.disease) {
+      jsonData[result.disease] = {
+        disease: result.disease,
+        diagnosis: result.diagnosis || "",
+        tests: parseContentToArray(result.tests),
+        treatment: parseContentToArray(result.treatment),
+        medications: parseContentToArray(result.medications),
+      };
+    }
+  });
+
+  try {
+    fs.writeFileSync(
+      "scrapped-diseases.json",
+      JSON.stringify(jsonData, null, 2)
+    );
+    console.log(
+      `✅ JSON data saved to scrapped-diseases.json (${
+        Object.keys(jsonData).length
+      } diseases)`
+    );
+  } catch (error) {
+    console.error("Error saving JSON data:", error.message);
+  }
+}
+
 async function findDiagnosisTreatmentUrl(originalUrl) {
-  console.log(`🔍 Looking for diagnosis & treatment link in: ${originalUrl}`);
+  console.log(`Looking for diagnosis & treatment link in: ${originalUrl}`);
 
   try {
     const { data } = await axios.get(originalUrl, {
@@ -66,28 +111,28 @@ async function findDiagnosisTreatmentUrl(originalUrl) {
           if (href.startsWith("/")) {
             href = "https://www.mayoclinic.org" + href;
           }
-          console.log(`✅ Found diagnosis & treatment URL: ${href}`);
+          console.log(`Found diagnosis & treatment URL: ${href}`);
           return href;
         }
       }
     }
 
-    console.log(`⚠️ Could not find diagnosis & treatment link`);
+    console.log(`Could not find diagnosis & treatment link`);
     return null;
   } catch (error) {
-    console.error(`❌ Error finding diagnosis URL:`, error.message);
+    console.error(`Error finding diagnosis URL:`, error.message);
     return null;
   }
 }
 
 async function scrapeDiagnosisTreatment(disease, originalUrl) {
-  console.log(`\n🔍 Starting scrape for: ${disease}`);
+  console.log(`\n Starting scrape for: ${disease}`);
 
   // First, find the actual diagnosis & treatment URL
   const diagnosisUrl = await findDiagnosisTreatmentUrl(originalUrl);
 
   if (!diagnosisUrl) {
-    console.log(`⚠️ Could not find diagnosis & treatment URL for ${disease}`);
+    console.log(`Could not find diagnosis & treatment URL for ${disease}`);
     return {
       disease,
       diagnosis: "NO_DIAGNOSIS_URL",
@@ -99,7 +144,7 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
     };
   }
 
-  console.log(`🔍 Scraping diagnosis & treatment from: ${diagnosisUrl}`);
+  console.log(`\n Scraping diagnosis & treatment from: ${diagnosisUrl}`);
 
   try {
     const { data } = await axios.get(diagnosisUrl, {
@@ -110,7 +155,6 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
     });
     const $ = cheerio.load(data);
 
-    // Initialize result object
     const result = {
       disease,
       diagnosis: "",
@@ -121,7 +165,6 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
       diagnosis_url: diagnosisUrl,
     };
 
-    // Try to find the main content container
     const possibleContainers = [
       ".main-content",
       ".content",
@@ -145,7 +188,6 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
       mainContent = $("body");
     }
 
-    // Look for headings
     const headings = mainContent.find("h1, h2, h3, h4, h5, h6");
 
     // Extract content based on headings
@@ -205,14 +247,14 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
     });
 
     console.log(
-      `✅ Results for ${disease}: D:${result.diagnosis ? "✓" : "✗"} T:${
+      `Results for ${disease}: D:${result.diagnosis ? "✓" : "✗"} T:${
         result.tests ? "✓" : "✗"
       } Tr:${result.treatment ? "✓" : "✗"} M:${result.medications ? "✓" : "✗"}`
     );
 
     return result;
   } catch (error) {
-    console.error(`❌ Error scraping ${disease}:`, error.message);
+    console.error(`Error scraping ${disease}:`, error.message);
     return {
       disease,
       diagnosis: "ERROR",
@@ -228,7 +270,7 @@ async function scrapeDiagnosisTreatment(disease, originalUrl) {
 async function loadDiseasesFromCsv() {
   try {
     const csvContent = fs.readFileSync(
-      "./CSV/diseases_all_letters.csv",
+      "../CSV/diseases_all_letters.csv",
       "utf8"
     );
     const lines = csvContent.split("\n").slice(1); // Skip header
@@ -255,7 +297,7 @@ async function loadDiseasesFromCsv() {
       }
     }
 
-    console.log(`📋 Loaded ${diseases.length} valid diseases from CSV`);
+    console.log(`Loaded ${diseases.length} valid diseases from CSV`);
     return diseases; // Process ALL diseases now
   } catch (error) {
     console.error("Error reading CSV file:", error.message);
@@ -276,7 +318,7 @@ function saveProgressCheckpoint(results, currentIndex) {
     "scraping_checkpoint.json",
     JSON.stringify(checkpointData, null, 2)
   );
-  console.log(`💾 Checkpoint saved at index ${currentIndex}`);
+  console.log(`Checkpoint saved at index ${currentIndex}`);
 }
 
 // Load progress if exists
@@ -286,9 +328,9 @@ function loadProgressCheckpoint() {
       const checkpoint = JSON.parse(
         fs.readFileSync("scraping_checkpoint.json", "utf8")
       );
-      console.log(`🔄 Found checkpoint from ${checkpoint.timestamp}`);
+      console.log(`Found checkpoint from ${checkpoint.timestamp}`);
       console.log(
-        `📊 Previous progress: ${checkpoint.totalResults} diseases processed`
+        `Previous progress: ${checkpoint.totalResults} diseases processed`
       );
       return checkpoint;
     }
@@ -299,8 +341,8 @@ function loadProgressCheckpoint() {
 }
 
 (async function main() {
-  console.log("🚀 Starting FULL diagnosis & treatment scraper...");
-  console.log("🌍 PRODUCTION MODE: Processing ALL diseases");
+  console.log("Starting FULL diagnosis & treatment scraper...");
+  console.log("PRODUCTION MODE: Processing ALL diseases");
 
   // Check for existing progress
   const checkpoint = loadProgressCheckpoint();
@@ -312,19 +354,19 @@ function loadProgressCheckpoint() {
     if (answer.toLowerCase() === "y") {
       startIndex = checkpoint.lastProcessedIndex + 1;
       existingResults = checkpoint.results || [];
-      console.log(`🔄 Resuming from disease ${startIndex + 1}`);
+      console.log(`Resuming from disease ${startIndex + 1}`);
     }
   }
 
   const diseases = await loadDiseasesFromCsv();
 
   if (diseases.length === 0) {
-    console.log("❌ No valid diseases found.");
+    console.log("No valid diseases found.");
     return;
   }
 
-  console.log(`📋 Total diseases to process: ${diseases.length}`);
-  console.log(`📋 Starting from index: ${startIndex}`);
+  console.log(`Total diseases to process: ${diseases.length}`);
+  console.log(`Starting from index: ${startIndex}`);
 
   const results = [...existingResults];
   let successCount = existingResults.filter(
@@ -337,10 +379,8 @@ function loadProgressCheckpoint() {
   for (let i = startIndex; i < diseases.length; i++) {
     const { disease, href } = diseases[i];
 
-    console.log(`\n📄 Processing ${i + 1}/${diseases.length}: ${disease}`);
-    console.log(
-      `⏳ Progress: ${(((i + 1) / diseases.length) * 100).toFixed(1)}%`
-    );
+    console.log(`\n Processing ${i + 1}/${diseases.length}: ${disease}`);
+    console.log(`Progress: ${(((i + 1) / diseases.length) * 100).toFixed(1)}%`);
 
     const result = await scrapeDiagnosisTreatment(disease, href);
 
@@ -360,14 +400,13 @@ function loadProgressCheckpoint() {
     if ((i + 1) % 10 === 0) {
       saveProgressCheckpoint(results, i);
 
-      // Also save partial CSV
+      // Also save partial CSV and JSON
       await csvWriter.writeRecords(results);
-      console.log(
-        `💾 Partial results saved to diagnosis_treatment_data_full.csv`
-      );
+      saveJsonData(results);
+      console.log(`Partial results saved to CSV and JSON files`);
     }
 
-    // Add delay to be respectful to the server
+    // DOS
     if (i < diseases.length - 1) {
       await new Promise((resolve) => setTimeout(resolve, 2000)); // 2 second delay
     }
@@ -376,17 +415,17 @@ function loadProgressCheckpoint() {
   // Final save
   if (results.length > 0) {
     await csvWriter.writeRecords(results);
-    console.log(`\n🎉 FULL SCRAPING COMPLETED!`);
-    console.log(`📊 Final Results:`);
-    console.log(`   ✅ Successfully scraped: ${successCount}`);
-    console.log(`   ❌ Errors/No URL: ${errorCount}`);
-    console.log(`   📄 Total processed: ${results.length}`);
+    saveJsonData(results);
+    console.log(`\nFULL SCRAPING COMPLETED!`);
+    console.log(`\nFinal Results:`);
+    console.log(`\nSuccessfully scraped: ${successCount}`);
+    console.log(`\nErrors/No URL: ${errorCount}`);
+    console.log(`\nTotal processed: ${results.length}`);
     console.log(
-      `   📈 Success rate: ${((successCount / results.length) * 100).toFixed(
-        1
-      )}%`
+      `\nSuccess rate: ${((successCount / results.length) * 100).toFixed(1)}%`
     );
-    console.log(`   💾 Data saved to: diagnosis_treatment_data_full.csv`);
+    console.log(`   💾 CSV saved to: diagnosis_treatment_data_full.csv`);
+    console.log(`   💾 JSON saved to: scrapped-diseases.json`);
 
     // Clean up checkpoint file
     if (fs.existsSync("scraping_checkpoint.json")) {
@@ -394,6 +433,6 @@ function loadProgressCheckpoint() {
       console.log(`🧹 Cleaned up checkpoint file`);
     }
   } else {
-    console.log("❌ No data was scraped successfully.");
+    console.log("No data was scraped successfully.");
   }
 })();
