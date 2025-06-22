@@ -252,11 +252,11 @@ function saveJsonData(results) {
 
   try {
     fs.writeFileSync(
-      "drugs-information.json",
+      "../CSV/drugs-information.json",
       JSON.stringify(jsonData, null, 2)
     );
     console.log(
-      `✅ JSON data saved to drugs-information.json (${
+      `✅ JSON data saved to ../CSV/drugs-information.json (${
         Object.keys(jsonData).length
       } drugs)`
     );
@@ -408,7 +408,7 @@ function loadProgressCheckpoint() {
       )}%`
     );
     console.log(`   💾 CSV saved to: ../CSV/drugs_information_full.csv`);
-    console.log(`   💾 JSON saved to: drugs-information.json`);
+    console.log(`   💾 JSON saved to: ../CSV/drugs-information.json`);
 
     if (fs.existsSync("drug_info_checkpoint.json")) {
       fs.unlinkSync("drug_info_checkpoint.json");
