@@ -205,7 +205,7 @@ async function processExistingDiseasesCSV() {
       }
 
       // Be respectful - wait between requests
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
     // Only write the CSV once at the very end

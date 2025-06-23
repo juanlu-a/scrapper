@@ -531,6 +531,12 @@ async function loadDiseasesWithDiagnosisUrls() {
   console.log("🔥 MAYO CLINIC CONTENT SCRAPER STARTING...");
 
   try {
+    // FIRST FIX: Delete existing output file to prevent duplicates
+    if (fs.existsSync("../CSV/diagnosis_treatment_data_final.csv")) {
+      fs.unlinkSync("../CSV/diagnosis_treatment_data_final.csv");
+      console.log("🧹 Cleared existing output CSV file");
+    }
+
     const diseases = await loadDiseasesWithDiagnosisUrls();
 
     if (diseases.length === 0) {
@@ -546,8 +552,21 @@ async function loadDiseasesWithDiagnosisUrls() {
     let successCount = 0;
     let errorCount = 0;
 
+    // SECOND FIX: Add tracking of processed diseases
+    const processedDiseaseSet = new Set();
+
     for (let i = 0; i < diseases.length; i++) {
       const { disease, symptomsUrl, diagnosisUrl } = diseases[i];
+
+      // Skip duplicates by URL
+      const diseaseKey = diagnosisUrl.toLowerCase();
+      if (processedDiseaseSet.has(diseaseKey)) {
+        console.log(`\n⚠️ Skipping duplicate disease URL: ${diagnosisUrl}`);
+        continue;
+      }
+
+      // Mark as processed
+      processedDiseaseSet.add(diseaseKey);
 
       console.log(`\n${"=".repeat(60)}`);
       console.log(`📋 Processing ${i + 1}/${diseases.length}: ${disease}`);
@@ -568,17 +587,33 @@ async function loadDiseasesWithDiagnosisUrls() {
         errorCount++;
       }
 
-      // Save checkpoint every 25 diseases
+      // THIRD FIX: Use JSON checkpoints instead of CSV checkpoints
       if ((i + 1) % 25 === 0) {
-        await csvWriter.writeRecords(results);
-        console.log(`💾 Checkpoint saved at disease ${i + 1}`);
+        // Save JSON checkpoint instead of CSV
+        fs.writeFileSync(
+          "diagnosis_scraper_checkpoint.json",
+          JSON.stringify(
+            {
+              timestamp: new Date().toISOString(),
+              progress: i + 1,
+              total: diseases.length,
+              processed: results.length,
+              successCount,
+              errorCount,
+            },
+            null,
+            2
+          )
+        );
+        console.log(`💾 JSON checkpoint saved at disease ${i + 1}`);
       }
 
       // Delay between requests
       await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
-    // Final save
+    // FOURTH FIX: Only write the CSV once at the very end
+    console.log(`\n💾 Writing final CSV with ${results.length} entries...`);
     await csvWriter.writeRecords(results);
 
     console.log(`\n🎉 SCRAPING COMPLETED!`);
@@ -587,6 +622,13 @@ async function loadDiseasesWithDiagnosisUrls() {
       `📈 Success rate: ${((successCount / results.length) * 100).toFixed(1)}%`
     );
     console.log(`💾 Data saved to: ../CSV/diagnosis_treatment_data_final.csv`);
+
+    // Save a complete backup JSON too
+    fs.writeFileSync(
+      "diagnosis_treatment_data_complete.json",
+      JSON.stringify(results, null, 2)
+    );
+    console.log(`💾 Backup saved to: diagnosis_treatment_data_complete.json`);
   } catch (error) {
     console.error("💥 Fatal error:", error);
   }
