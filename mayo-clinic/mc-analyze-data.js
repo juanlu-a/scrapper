@@ -4,44 +4,166 @@ const ExcelJS = require("exceljs");
 
 console.log("🔍 MEDICAL DATA ANALYSIS STARTING...");
 
+// Helper function to clean cell text and prevent line breaks
+function cleanCellText(text) {
+  if (!text) return "";
+
+  // Remove ALL invisible and control characters first
+  let cleaned = text
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "") // Control characters
+    .replace(/[\r\n\t]/g, " ") // Line breaks and tabs
+    .replace(/\u00A0/g, " ") // Non-breaking spaces
+    .replace(/\u2028/g, " ") // Line separator
+    .replace(/\u2029/g, " ") // Paragraph separator
+    .replace(/\s+/g, " ") // Multiple spaces to single
+    .trim();
+
+  // Optional: Replace colons with arrows if still having issues
+  // cleaned = cleaned.replace(/:/g, ' →');
+
+  return cleaned;
+}
 // Function to parse CSV data
 function parseCSV(filePath) {
   console.log(`📂 Reading CSV file: ${filePath}`);
   const content = fs.readFileSync(filePath, "utf8");
   const lines = content.trim().split("\n");
-  const headers = lines[0].split(",");
+
+  // Get headers from first line
+  const headerLine = lines[0];
+  const headers = parseCSVLine(headerLine);
 
   const data = [];
   for (let i = 1; i < lines.length; i++) {
     if (!lines[i].trim()) continue;
 
-    // Handle commas within quote-enclosed fields
-    let currentLine = lines[i];
-    const values = [];
-    let insideQuotes = false;
-    let currentValue = "";
-
-    for (let j = 0; j < currentLine.length; j++) {
-      const char = currentLine[j];
-
-      if (char === '"') {
-        insideQuotes = !insideQuotes;
-      } else if (char === "," && !insideQuotes) {
-        values.push(currentValue);
-        currentValue = "";
-      } else {
-        currentValue += char;
-      }
-    }
-
-    // Add the last value
-    values.push(currentValue);
+    // Parse each line properly
+    const values = parseCSVLine(lines[i]);
 
     // Create an object from headers and values
     const row = {};
     for (let j = 0; j < headers.length; j++) {
-      // Clean up quotes and extra whitespace
-      const value = values[j] ? values[j].replace(/^"|"$/g, "").trim() : "";
+      // Clean up quotes, extra whitespace, AND invisible characters
+      let value = values[j] ? values[j].replace(/^"|"$/g, "").trim() : "";
+
+      // Remove ALL invisible characters and control characters
+      value = value
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "") // Remove control characters
+        .replace(/[\r\n\t]/g, " ") // Replace line breaks and tabs with spaces
+        .replace(/\s+/g, " ") // Replace multiple spaces with single space
+        .trim();
+
+      row[headers[j]] = value;
+    }
+
+    data.push(row);
+  }
+
+  console.log(`✅ Successfully parsed ${data.length} records`);
+  return data;
+}
+
+// Helper function to properly parse a CSV line (handles multi-line quoted fields)
+function parseCSVLine(line) {
+  const values = [];
+  let current = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    const nextChar = line[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        // Handle escaped quotes ("") within quoted fields
+        current += '"';
+        i++; // Skip the next quote
+      } else {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+      }
+    } else if (char === "," && !inQuotes) {
+      // Found field separator outside of quotes
+      values.push(current);
+      current = "";
+    } else {
+      // Regular character (including colons, semicolons, newlines within quotes)
+      current += char;
+    }
+  }
+
+  // Add the last field
+  values.push(current);
+
+  return values;
+}
+
+// Updated parseCSV function to handle multi-line fields
+function parseCSV(filePath) {
+  console.log(`📂 Reading CSV file: ${filePath}`);
+  const content = fs.readFileSync(filePath, "utf8");
+
+  // Don't split by lines immediately - we need to handle multi-line quoted fields
+  const rows = [];
+  let currentRow = "";
+  let inQuotes = false;
+
+  // Process character by character to properly handle quoted multi-line fields
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    const nextChar = content[i + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        // Escaped quote
+        currentRow += '""';
+        i++; // Skip next quote
+      } else {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+        currentRow += char;
+      }
+    } else if (char === "\n" && !inQuotes) {
+      // End of row (only if not inside quotes)
+      if (currentRow.trim()) {
+        rows.push(currentRow.trim());
+      }
+      currentRow = "";
+    } else {
+      currentRow += char;
+    }
+  }
+
+  // Add the last row if it exists
+  if (currentRow.trim()) {
+    rows.push(currentRow.trim());
+  }
+
+  if (rows.length === 0) {
+    throw new Error("No data found in CSV file");
+  }
+
+  // Get headers from first row
+  const headers = parseCSVLine(rows[0]);
+
+  const data = [];
+  for (let i = 1; i < rows.length; i++) {
+    // Parse each row properly
+    const values = parseCSVLine(rows[i]);
+
+    // Create an object from headers and values
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      // Clean up quotes, extra whitespace, AND invisible characters
+      let value = values[j] ? values[j].replace(/^"|"$/g, "").trim() : "";
+
+      // Remove ALL invisible characters and control characters
+      value = value
+        .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, "") // Remove control characters
+        .replace(/[\r\n\t]/g, " ") // Replace line breaks and tabs with spaces
+        .replace(/\s+/g, " ") // Replace multiple spaces with single space
+        .trim();
+
       row[headers[j]] = value;
     }
 
@@ -122,9 +244,9 @@ async function createExcelReport(
   const headers = Object.keys(data[0]);
   fullDataSheet.addRow(headers);
 
-  // Add data rows
+  // Add data rows with cleaned text
   data.forEach((row) => {
-    fullDataSheet.addRow(headers.map((header) => row[header]));
+    fullDataSheet.addRow(headers.map((header) => cleanCellText(row[header])));
   });
 
   // Format headers
@@ -149,7 +271,7 @@ async function createExcelReport(
 
   medications.counts.forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    medsSheet.addRow([item, count, `${percentage}%`]);
+    medsSheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
 
   // Format headers
@@ -167,7 +289,7 @@ async function createExcelReport(
   medsSheet.addRow(["Total Unique Medications", medications.counts.length]);
   medsSheet.addRow([
     "Most Common Medication",
-    medications.counts[0]?.item || "None",
+    cleanCellText(medications.counts[0]?.item) || "None",
   ]);
   medsSheet.addRow([
     "Diseases with No Medications",
@@ -181,7 +303,7 @@ async function createExcelReport(
 
   treatments.counts.forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    treatmentsSheet.addRow([item, count, `${percentage}%`]);
+    treatmentsSheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
 
   // Format headers
@@ -199,7 +321,7 @@ async function createExcelReport(
   treatmentsSheet.addRow(["Total Unique Treatments", treatments.counts.length]);
   treatmentsSheet.addRow([
     "Most Common Treatment",
-    treatments.counts[0]?.item || "None",
+    cleanCellText(treatments.counts[0]?.item) || "None",
   ]);
   treatmentsSheet.addRow([
     "Diseases with No Treatments",
@@ -213,7 +335,7 @@ async function createExcelReport(
 
   tests.counts.forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    testsSheet.addRow([item, count, `${percentage}%`]);
+    testsSheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
 
   // Format headers
@@ -229,7 +351,10 @@ async function createExcelReport(
   testsSheet.addRow([]);
   testsSheet.addRow(["SUMMARY STATISTICS"]);
   testsSheet.addRow(["Total Unique Tests", tests.counts.length]);
-  testsSheet.addRow(["Most Common Test", tests.counts[0]?.item || "None"]);
+  testsSheet.addRow([
+    "Most Common Test",
+    cleanCellText(tests.counts[0]?.item) || "None",
+  ]);
   testsSheet.addRow([
     "Diseases with No Tests",
     data.length - Object.keys(tests.byDisease).length,
@@ -253,7 +378,7 @@ async function createExcelReport(
   summarySheet.addRow(["Medication", "Count", "Percentage"]);
   medications.counts.slice(0, 10).forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    summarySheet.addRow([item, count, `${percentage}%`]);
+    summarySheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
   summarySheet.addRow([]);
 
@@ -261,7 +386,7 @@ async function createExcelReport(
   summarySheet.addRow(["Treatment", "Count", "Percentage"]);
   treatments.counts.slice(0, 10).forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    summarySheet.addRow([item, count, `${percentage}%`]);
+    summarySheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
   summarySheet.addRow([]);
 
@@ -269,7 +394,7 @@ async function createExcelReport(
   summarySheet.addRow(["Test", "Count", "Percentage"]);
   tests.counts.slice(0, 10).forEach(({ item, count }) => {
     const percentage = ((count / data.length) * 100).toFixed(2);
-    summarySheet.addRow([item, count, `${percentage}%`]);
+    summarySheet.addRow([cleanCellText(item), count, `${percentage}%`]);
   });
 
   // Format summary sheet
@@ -495,7 +620,7 @@ async function createExcelReport(
   // Show top 10 most comprehensively treated diseases
   comprehensiveTreatmentDiseases.slice(0, 10).forEach((item) => {
     statsSheet.addRow([
-      item.disease,
+      cleanCellText(item.disease),
       item.totalItems,
       item.medCount,
       item.treatCount,
