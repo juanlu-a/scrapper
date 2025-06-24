@@ -1,575 +1,610 @@
 const fs = require("fs");
-const createCsvWriter = require("csv-writer").createObjectCsvWriter;
+const path = require("path");
+const ExcelJS = require("exceljs");
 
-// Function to properly parse CSV line with quoted fields
-function parseCsvLine(line) {
-  const result = [];
-  let current = "";
-  let inQuotes = false;
-  let i = 0;
+console.log("🔍 MEDICAL DATA ANALYSIS STARTING...");
 
-  while (i < line.length) {
-    const char = line[i];
-    const nextChar = line[i + 1];
+// Function to parse CSV data
+function parseCSV(filePath) {
+  console.log(`📂 Reading CSV file: ${filePath}`);
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.trim().split("\n");
+  const headers = lines[0].split(",");
 
-    if (char === '"') {
-      if (inQuotes && nextChar === '"') {
-        // Escaped quote
-        current += '"';
-        i += 2;
-        continue;
+  const data = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+
+    // Handle commas within quote-enclosed fields
+    let currentLine = lines[i];
+    const values = [];
+    let insideQuotes = false;
+    let currentValue = "";
+
+    for (let j = 0; j < currentLine.length; j++) {
+      const char = currentLine[j];
+
+      if (char === '"') {
+        insideQuotes = !insideQuotes;
+      } else if (char === "," && !insideQuotes) {
+        values.push(currentValue);
+        currentValue = "";
       } else {
-        // Toggle quote state
-        inQuotes = !inQuotes;
-      }
-    } else if (char === "," && !inQuotes) {
-      // End of field
-      result.push(current.trim());
-      current = "";
-      i++;
-      continue;
-    } else {
-      current += char;
-    }
-    i++;
-  }
-
-  // Add the last field
-  if (current) {
-    result.push(current.trim());
-  }
-
-  return result;
-}
-
-// Function to normalize and clean text
-function normalizeText(text) {
-  if (
-    !text ||
-    text === "Information not found" ||
-    text === "Tests information not found" ||
-    text === "Treatment information not found" ||
-    text === "Medications information not found" ||
-    text.startsWith("ERROR") ||
-    text.startsWith("NO_")
-  ) {
-    return [];
-  }
-
-  return text
-    .split(/[;|]\s*/) // Split by semicolons or pipes
-    .map((item) => item.trim())
-    .filter((item) => item.length > 3)
-    .map((item) =>
-      item
-        .toLowerCase()
-        .replace(/[^\w\s-]/g, "") // Remove special characters except hyphens
-        .replace(/\s+/g, " ")
-        .trim()
-    )
-    .filter((item) => item.length > 2);
-}
-
-// Function to extract medication names more precisely
-function extractMedicationNames(medicationText) {
-  if (
-    !medicationText ||
-    medicationText === "Medications information not found" ||
-    medicationText.startsWith("ERROR") ||
-    medicationText.startsWith("NO_")
-  ) {
-    return [];
-  }
-
-  const medications = [];
-  const text = medicationText.toLowerCase();
-
-  // Common medication patterns and suffixes
-  const medicationSuffixes = [
-    "cillin",
-    "mycin",
-    "azole",
-    "prazole",
-    "olol",
-    "pril",
-    "sartan",
-    "statin",
-    "ide",
-    "ine",
-    "ate",
-    "one",
-    "um",
-    "ex",
-    "max",
-  ];
-
-  // Split by common separators
-  const items = medicationText
-    .split(/[;|,]\s*/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 2);
-
-  for (const item of items) {
-    // Clean the item
-    const cleaned = item
-      .toLowerCase()
-      .replace(/[^\w\s-]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    // Extract potential medication names (usually first word or two)
-    const words = cleaned.split(" ");
-
-    // Look for medication-like patterns
-    for (let i = 0; i < words.length; i++) {
-      const word = words[i];
-
-      // Check if word looks like a medication name
-      if (word.length >= 4) {
-        // Check if it has medication-like suffixes
-        const hasMedSuffix = medicationSuffixes.some((suffix) =>
-          word.endsWith(suffix)
-        );
-
-        // Check if it's a branded name (starts with capital)
-        const isProperName = /^[A-Z][a-z]+/.test(item.split(" ")[i]);
-
-        // Include if it looks like a medication
-        if (hasMedSuffix || isProperName || word.length >= 6) {
-          // Take the word and possibly the next one for compound names
-          let medName = word;
-          if (i < words.length - 1 && words[i + 1].length >= 3) {
-            medName += " " + words[i + 1];
-          }
-          medications.push(medName.trim());
-        }
+        currentValue += char;
       }
     }
 
-    // Also add the full cleaned item if it's not too long
+    // Add the last value
+    values.push(currentValue);
+
+    // Create an object from headers and values
+    const row = {};
+    for (let j = 0; j < headers.length; j++) {
+      // Clean up quotes and extra whitespace
+      const value = values[j] ? values[j].replace(/^"|"$/g, "").trim() : "";
+      row[headers[j]] = value;
+    }
+
+    data.push(row);
+  }
+
+  console.log(`✅ Successfully parsed ${data.length} records`);
+  return data;
+}
+
+// Function to extract and count items from a semicolon-separated list
+function extractAndCountItems(data, fieldName) {
+  const itemCounts = {};
+  const itemsByDisease = {};
+
+  console.log(`🔢 Counting items in field: ${fieldName}`);
+
+  data.forEach((row) => {
+    const diseaseName = row.Disease;
+    const itemsText = row[fieldName];
+
+    // Skip rows with errors or missing data
     if (
-      cleaned.length >= 4 &&
-      cleaned.length <= 50 &&
-      !cleaned.includes("such as")
+      !itemsText ||
+      itemsText.toLowerCase().includes("error") ||
+      itemsText.toLowerCase().includes("not found")
     ) {
-      medications.push(cleaned);
-    }
-  }
-
-  // Remove duplicates and return
-  return [...new Set(medications)];
-}
-
-// Main analysis function
-function analyzeMayoClinicData() {
-  console.log("🔍 MAYO CLINIC DATA ANALYZER STARTING...");
-  console.log(
-    "📊 Analyzing patterns, shared treatments, tests, and medications"
-  );
-
-  try {
-    const csvContent = fs.readFileSync(
-      "../CSV/diagnosis_treatment_data_full.csv",
-      "utf8"
-    );
-    const lines = csvContent.split("\n");
-
-    if (lines.length < 2) {
-      console.log("❌ CSV file appears to be empty or malformed");
       return;
     }
 
-    const header = lines[0];
-    const dataLines = lines.slice(1).filter((line) => line.trim()); // Skip header and empty lines
+    // Split by semicolon and trim each item
+    const items = itemsText
+      .split(";")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
 
-    console.log(`📋 Processing ${dataLines.length} disease records...`);
-    console.log(`📋 CSV Header: ${header}`);
+    // Add to disease-specific tracking
+    itemsByDisease[diseaseName] = items;
 
-    const diseases = [];
-    const allTests = new Map();
-    const allTreatments = new Map();
-    const allMedications = new Map();
-
-    // Track which diseases use each item
-    const testsByDisease = new Map();
-    const treatmentsByDisease = new Map();
-    const medicationsByDisease = new Map();
-
-    let processedCount = 0;
-    let validCount = 0;
-
-    // Process each disease
-    dataLines.forEach((line, index) => {
-      if (line.trim()) {
-        processedCount++;
-
-        // Parse CSV line properly
-        const parts = parseCsvLine(line);
-
-        if (parts.length >= 5) {
-          const disease = parts[0] || "";
-          const diagnosis = parts[1] || "";
-          const testsText = parts[2] || "";
-          const treatmentText = parts[3] || "";
-          const medicationsText = parts[4] || "";
-
-          console.log(
-            `🔍 Processing ${index + 1}: ${disease.substring(0, 30)}...`
-          );
-
-          // Skip invalid entries
-          if (
-            diagnosis === "NO_DIAGNOSIS_URL" ||
-            diagnosis.startsWith("ERROR") ||
-            diagnosis === "Information not found"
-          ) {
-            console.log(`   ⚠️ Skipping invalid entry`);
-            return;
-          }
-
-          validCount++;
-          diseases.push({
-            disease,
-            diagnosis,
-            testsText,
-            treatmentText,
-            medicationsText,
-          });
-
-          // Process tests
-          const tests = normalizeText(testsText);
-          tests.forEach((test) => {
-            if (!allTests.has(test)) {
-              allTests.set(test, 0);
-              testsByDisease.set(test, []);
-            }
-            allTests.set(test, allTests.get(test) + 1);
-            testsByDisease.get(test).push(disease);
-          });
-
-          // Process treatments
-          const treatments = normalizeText(treatmentText);
-          treatments.forEach((treatment) => {
-            if (!allTreatments.has(treatment)) {
-              allTreatments.set(treatment, 0);
-              treatmentsByDisease.set(treatment, []);
-            }
-            allTreatments.set(treatment, allTreatments.get(treatment) + 1);
-            treatmentsByDisease.get(treatment).push(disease);
-          });
-
-          // Process medications with special extraction
-          const medications = extractMedicationNames(medicationsText);
-          medications.forEach((medication) => {
-            if (!allMedications.has(medication)) {
-              allMedications.set(medication, 0);
-              medicationsByDisease.set(medication, []);
-            }
-            allMedications.set(medication, allMedications.get(medication) + 1);
-            medicationsByDisease.get(medication).push(disease);
-          });
-
-          // Show progress every 50 diseases
-          if (validCount % 50 === 0) {
-            console.log(`\n📈 Progress: ${validCount} diseases processed...`);
-            console.log(`   🧪 Tests so far: ${allTests.size}`);
-            console.log(`   🏥 Treatments so far: ${allTreatments.size}`);
-            console.log(`   💊 Medications so far: ${allMedications.size}\n`);
-          }
-        } else {
-          console.log(
-            `⚠️ Line ${index + 1} has insufficient columns (${
-              parts.length
-            }): ${line.substring(0, 100)}...`
-          );
-        }
-      }
+    // Count each item
+    items.forEach((item) => {
+      itemCounts[item] = (itemCounts[item] || 0) + 1;
     });
+  });
 
-    console.log(`\n📊 ANALYSIS RESULTS:`);
-    console.log(`   📋 Total lines processed: ${processedCount}`);
-    console.log(`   ✅ Valid diseases processed: ${validCount}`);
-    console.log(`   🧪 Unique tests found: ${allTests.size}`);
-    console.log(`   🏥 Unique treatments found: ${allTreatments.size}`);
-    console.log(`   💊 Unique medications found: ${allMedications.size}`);
+  // Sort items by count (descending)
+  const sortedItems = Object.entries(itemCounts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([item, count]) => ({ item, count }));
 
-    if (validCount === 0) {
-      console.log(
-        "❌ No valid diseases found to analyze. Check the CSV format."
-      );
-      return;
-    }
+  console.log(`📊 Found ${sortedItems.length} unique items in ${fieldName}`);
 
-    // Create comprehensive analysis
-    createComprehensiveAnalysis(
-      allTests,
-      testsByDisease,
-      allTreatments,
-      treatmentsByDisease,
-      allMedications,
-      medicationsByDisease,
-      diseases
-    );
-
-    console.log(`\n✅ Analysis complete! Generated comprehensive file:`);
-    console.log(
-      `   📊 ../CSV/mayo-clinic-comprehensive-analysis.csv - All data in one file`
-    );
-    console.log(
-      `   📈 ../CSV/analysis-summary.json - Overall statistics and insights`
-    );
-  } catch (error) {
-    console.error("❌ Error analyzing data:", error.message);
-    console.error("Stack trace:", error.stack);
-  }
+  return {
+    counts: sortedItems,
+    byDisease: itemsByDisease,
+  };
 }
 
-// Create comprehensive analysis in one CSV file
-function createComprehensiveAnalysis(
-  allTests,
-  testsByDisease,
-  allTreatments,
-  treatmentsByDisease,
-  allMedications,
-  medicationsByDisease,
-  diseases
+// Function to create the Excel report
+async function createExcelReport(
+  data,
+  medications,
+  treatments,
+  tests,
+  outputPath
 ) {
-  const comprehensiveData = [];
+  console.log("📊 Creating Excel report...");
 
-  // Add all tests
-  Array.from(allTests.entries())
-    .sort((a, b) => b[1] - a[1]) // Sort by usage count descending
-    .forEach(([item, count]) => {
-      comprehensiveData.push({
-        category: "Test",
-        item: item,
-        usage_count: count,
-        diseases_count: testsByDisease.get(item).length,
-        is_shared: testsByDisease.get(item).length > 1 ? "Yes" : "No",
-        diseases_using: testsByDisease.get(item).join("; "),
-        clean_name_for_matching: item.replace(/\s+/g, " ").trim(),
-        search_terms: item
-          .split(" ")
-          .filter((word) => word.length >= 3)
-          .join(", "),
-      });
-    });
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Mayo Clinic Data Analyzer";
+  workbook.created = new Date();
 
-  // Add all treatments
-  Array.from(allTreatments.entries())
-    .sort((a, b) => b[1] - a[1]) // Sort by usage count descending
-    .forEach(([item, count]) => {
-      comprehensiveData.push({
-        category: "Treatment",
-        item: item,
-        usage_count: count,
-        diseases_count: treatmentsByDisease.get(item).length,
-        is_shared: treatmentsByDisease.get(item).length > 1 ? "Yes" : "No",
-        diseases_using: treatmentsByDisease.get(item).join("; "),
-        clean_name_for_matching: item.replace(/\s+/g, " ").trim(),
-        search_terms: item
-          .split(" ")
-          .filter((word) => word.length >= 3)
-          .join(", "),
-      });
-    });
+  // 1. Full Data Sheet
+  console.log("📝 Creating Full Data sheet");
+  const fullDataSheet = workbook.addWorksheet("Full Data");
 
-  // Add all medications
-  Array.from(allMedications.entries())
-    .sort((a, b) => b[1] - a[1]) // Sort by usage count descending
-    .forEach(([item, count]) => {
-      const cleanName = item.replace(/\s+/g, " ").trim().split(" ")[0]; // First word for drug matching
+  // Add headers
+  const headers = Object.keys(data[0]);
+  fullDataSheet.addRow(headers);
 
-      comprehensiveData.push({
-        category: "Medication",
-        item: item,
-        usage_count: count,
-        diseases_count: medicationsByDisease.get(item).length,
-        is_shared: medicationsByDisease.get(item).length > 1 ? "Yes" : "No",
-        diseases_using: medicationsByDisease.get(item).join("; "),
-        clean_name_for_matching: cleanName,
-        search_terms: item
-          .split(" ")
-          .filter((word) => word.length >= 3)
-          .join(", "),
-      });
-    });
-
-  // Create CSV writer for comprehensive data
-  const comprehensiveWriter = createCsvWriter({
-    path: "../CSV/mayo-clinic-comprehensive-analysis.csv",
-    header: [
-      { id: "category", title: "Category" },
-      { id: "item", title: "Item" },
-      { id: "usage_count", title: "Usage Count" },
-      { id: "diseases_count", title: "Number of Diseases" },
-      { id: "is_shared", title: "Shared by Multiple Diseases" },
-      { id: "clean_name_for_matching", title: "Clean Name for Drug Matching" },
-      { id: "search_terms", title: "Search Terms" },
-      { id: "diseases_using", title: "Diseases Using This Item" },
-    ],
+  // Add data rows
+  data.forEach((row) => {
+    fullDataSheet.addRow(headers.map((header) => row[header]));
   });
 
-  comprehensiveWriter.writeRecords(comprehensiveData);
-
-  // Create summary statistics
-  createSummaryReport(diseases, allTests, allTreatments, allMedications);
-
-  console.log(
-    `📊 Comprehensive analysis saved with ${comprehensiveData.length} total entries:`
-  );
-  console.log(`   🧪 Tests: ${allTests.size}`);
-  console.log(`   🏥 Treatments: ${allTreatments.size}`);
-  console.log(`   💊 Medications: ${allMedications.size}`);
-
-  // Show top items from each category
-  const topTests = Array.from(allTests.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-  const topTreatments = Array.from(allTreatments.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-  const topMedications = Array.from(allMedications.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3);
-
-  console.log(`\n🔝 TOP ITEMS BY CATEGORY:`);
-  console.log(`   🧪 Most common tests:`);
-  topTests.forEach((item, i) => {
-    console.log(`      ${i + 1}. ${item[0]} (${item[1]} diseases)`);
-  });
-
-  console.log(`   🏥 Most common treatments:`);
-  topTreatments.forEach((item, i) => {
-    console.log(`      ${i + 1}. ${item[0]} (${item[1]} diseases)`);
-  });
-
-  console.log(`   💊 Most common medications:`);
-  topMedications.forEach((item, i) => {
-    console.log(`      ${i + 1}. ${item[0]} (${item[1]} diseases)`);
-  });
-
-  // Count shared items
-  const sharedTests = Array.from(testsByDisease.values()).filter(
-    (diseases) => diseases.length > 1
-  ).length;
-  const sharedTreatments = Array.from(treatmentsByDisease.values()).filter(
-    (diseases) => diseases.length > 1
-  ).length;
-  const sharedMedications = Array.from(medicationsByDisease.values()).filter(
-    (diseases) => diseases.length > 1
-  ).length;
-
-  console.log(`\n🔗 SHARED ITEMS SUMMARY:`);
-  console.log(`   🧪 Tests shared by multiple diseases: ${sharedTests}`);
-  console.log(
-    `   🏥 Treatments shared by multiple diseases: ${sharedTreatments}`
-  );
-  console.log(
-    `   💊 Medications shared by multiple diseases: ${sharedMedications}`
-  );
-}
-
-// Create summary report with insights
-function createSummaryReport(
-  diseases,
-  allTests,
-  allTreatments,
-  allMedications
-) {
-  // Handle empty data gracefully
-  const topTests = Array.from(allTests.entries()).sort((a, b) => b[1] - a[1]);
-  const topTreatments = Array.from(allTreatments.entries()).sort(
-    (a, b) => b[1] - a[1]
-  );
-  const topMedications = Array.from(allMedications.entries()).sort(
-    (a, b) => b[1] - a[1]
-  );
-
-  const summary = {
-    timestamp: new Date().toISOString(),
-    overview: {
-      total_diseases: diseases.length,
-      unique_tests: allTests.size,
-      unique_treatments: allTreatments.size,
-      unique_medications: allMedications.size,
-      total_items: allTests.size + allTreatments.size + allMedications.size,
-    },
-    top_tests: topTests.slice(0, 10).map(([test, count]) => ({ test, count })),
-    top_treatments: topTreatments
-      .slice(0, 10)
-      .map(([treatment, count]) => ({ treatment, count })),
-    top_medications: topMedications
-      .slice(0, 10)
-      .map(([medication, count]) => ({ medication, count })),
-    insights: {
-      most_common_test: topTests.length > 0 ? topTests[0] : ["none", 0],
-      most_common_treatment:
-        topTreatments.length > 0 ? topTreatments[0] : ["none", 0],
-      most_common_medication:
-        topMedications.length > 0 ? topMedications[0] : ["none", 0],
-      avg_tests_per_disease:
-        diseases.length > 0
-          ? (
-              Array.from(allTests.values()).reduce((a, b) => a + b, 0) /
-              diseases.length
-            ).toFixed(2)
-          : "0",
-      avg_treatments_per_disease:
-        diseases.length > 0
-          ? (
-              Array.from(allTreatments.values()).reduce((a, b) => a + b, 0) /
-              diseases.length
-            ).toFixed(2)
-          : "0",
-      avg_medications_per_disease:
-        diseases.length > 0
-          ? (
-              Array.from(allMedications.values()).reduce((a, b) => a + b, 0) /
-              diseases.length
-            ).toFixed(2)
-          : "0",
-    },
-    data_quality: {
-      diseases_with_tests: diseases.filter(
-        (d) => normalizeText(d.testsText).length > 0
-      ).length,
-      diseases_with_treatments: diseases.filter(
-        (d) => normalizeText(d.treatmentText).length > 0
-      ).length,
-      diseases_with_medications: diseases.filter(
-        (d) => extractMedicationNames(d.medicationsText).length > 0
-      ).length,
-    },
+  // Format headers
+  const headerRow = fullDataSheet.getRow(1);
+  headerRow.font = { bold: true };
+  headerRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFD3D3D3" },
   };
 
-  fs.writeFileSync(
-    "../CSV/analysis-summary.json",
-    JSON.stringify(summary, null, 2)
-  );
+  // Auto-size columns (approximate)
+  headers.forEach((_, i) => {
+    const column = fullDataSheet.getColumn(i + 1);
+    column.width = 30;
+  });
 
-  console.log(`\n📈 KEY INSIGHTS:`);
-  console.log(
-    `   🧪 Most common test: ${summary.insights.most_common_test[0]} (${summary.insights.most_common_test[1]} diseases)`
-  );
-  console.log(
-    `   🏥 Most common treatment: ${summary.insights.most_common_treatment[0]} (${summary.insights.most_common_treatment[1]} diseases)`
-  );
-  console.log(
-    `   💊 Most common medication: ${summary.insights.most_common_medication[0]} (${summary.insights.most_common_medication[1]} diseases)`
-  );
-  console.log(
-    `   📊 Average tests per disease: ${summary.insights.avg_tests_per_disease}`
-  );
-  console.log(
-    `   📊 Average treatments per disease: ${summary.insights.avg_treatments_per_disease}`
-  );
-  console.log(
-    `   📊 Average medications per disease: ${summary.insights.avg_medications_per_disease}`
-  );
+  // 2. Medications Analysis Sheet
+  console.log("💊 Creating Medications Analysis sheet");
+  const medsSheet = workbook.addWorksheet("Medications Analysis");
+  medsSheet.addRow(["Medication", "Count", "Percentage of Diseases"]);
+
+  medications.counts.forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    medsSheet.addRow([item, count, `${percentage}%`]);
+  });
+
+  // Format headers
+  const medsHeaderRow = medsSheet.getRow(1);
+  medsHeaderRow.font = { bold: true };
+  medsHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFD3D3D3" },
+  };
+
+  // Add summary section
+  medsSheet.addRow([]);
+  medsSheet.addRow(["SUMMARY STATISTICS"]);
+  medsSheet.addRow(["Total Unique Medications", medications.counts.length]);
+  medsSheet.addRow([
+    "Most Common Medication",
+    medications.counts[0]?.item || "None",
+  ]);
+  medsSheet.addRow([
+    "Diseases with No Medications",
+    data.length - Object.keys(medications.byDisease).length,
+  ]);
+
+  // 3. Treatments Analysis Sheet
+  console.log("🩺 Creating Treatments Analysis sheet");
+  const treatmentsSheet = workbook.addWorksheet("Treatments Analysis");
+  treatmentsSheet.addRow(["Treatment", "Count", "Percentage of Diseases"]);
+
+  treatments.counts.forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    treatmentsSheet.addRow([item, count, `${percentage}%`]);
+  });
+
+  // Format headers
+  const treatmentsHeaderRow = treatmentsSheet.getRow(1);
+  treatmentsHeaderRow.font = { bold: true };
+  treatmentsHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFD3D3D3" },
+  };
+
+  // Add summary section
+  treatmentsSheet.addRow([]);
+  treatmentsSheet.addRow(["SUMMARY STATISTICS"]);
+  treatmentsSheet.addRow(["Total Unique Treatments", treatments.counts.length]);
+  treatmentsSheet.addRow([
+    "Most Common Treatment",
+    treatments.counts[0]?.item || "None",
+  ]);
+  treatmentsSheet.addRow([
+    "Diseases with No Treatments",
+    data.length - Object.keys(treatments.byDisease).length,
+  ]);
+
+  // 4. Tests Analysis Sheet
+  console.log("🔬 Creating Tests Analysis sheet");
+  const testsSheet = workbook.addWorksheet("Tests Analysis");
+  testsSheet.addRow(["Test", "Count", "Percentage of Diseases"]);
+
+  tests.counts.forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    testsSheet.addRow([item, count, `${percentage}%`]);
+  });
+
+  // Format headers
+  const testsHeaderRow = testsSheet.getRow(1);
+  testsHeaderRow.font = { bold: true };
+  testsHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFD3D3D3" },
+  };
+
+  // Add summary section
+  testsSheet.addRow([]);
+  testsSheet.addRow(["SUMMARY STATISTICS"]);
+  testsSheet.addRow(["Total Unique Tests", tests.counts.length]);
+  testsSheet.addRow(["Most Common Test", tests.counts[0]?.item || "None"]);
+  testsSheet.addRow([
+    "Diseases with No Tests",
+    data.length - Object.keys(tests.byDisease).length,
+  ]);
+
+  // 5. Summary Sheet
+  console.log("📈 Creating Summary sheet");
+  const summarySheet = workbook.addWorksheet("Summary");
+  summarySheet.addRow(["Mayo Clinic Medical Data Analysis"]);
+  summarySheet.addRow(["Date Generated", new Date().toLocaleString()]);
+  summarySheet.addRow([]);
+
+  summarySheet.addRow(["OVERALL STATISTICS"]);
+  summarySheet.addRow(["Total Diseases Analyzed", data.length]);
+  summarySheet.addRow(["Unique Medications", medications.counts.length]);
+  summarySheet.addRow(["Unique Treatments", treatments.counts.length]);
+  summarySheet.addRow(["Unique Tests", tests.counts.length]);
+  summarySheet.addRow([]);
+
+  summarySheet.addRow(["TOP 10 MEDICATIONS"]);
+  summarySheet.addRow(["Medication", "Count", "Percentage"]);
+  medications.counts.slice(0, 10).forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    summarySheet.addRow([item, count, `${percentage}%`]);
+  });
+  summarySheet.addRow([]);
+
+  summarySheet.addRow(["TOP 10 TREATMENTS"]);
+  summarySheet.addRow(["Treatment", "Count", "Percentage"]);
+  treatments.counts.slice(0, 10).forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    summarySheet.addRow([item, count, `${percentage}%`]);
+  });
+  summarySheet.addRow([]);
+
+  summarySheet.addRow(["TOP 10 TESTS"]);
+  summarySheet.addRow(["Test", "Count", "Percentage"]);
+  tests.counts.slice(0, 10).forEach(({ item, count }) => {
+    const percentage = ((count / data.length) * 100).toFixed(2);
+    summarySheet.addRow([item, count, `${percentage}%`]);
+  });
+
+  // Format summary sheet
+  summarySheet.getRow(1).font = { bold: true, size: 16 };
+
+  // 6. Detailed Statistics Sheet
+  console.log("📈 Creating Detailed Statistics sheet");
+  const statsSheet = workbook.addWorksheet("Detailed Statistics");
+
+  // Header
+  statsSheet.addRow(["DETAILED MEDICAL DATA STATISTICS"]);
+  statsSheet.getRow(1).font = { bold: true, size: 16 };
+  statsSheet.addRow([`Analysis Date: ${new Date().toLocaleString()}`]);
+  statsSheet.addRow([]);
+
+  // Disease Statistics
+  statsSheet.addRow(["DISEASE STATISTICS"]);
+  statsSheet.getRow(4).font = { bold: true };
+
+  // Calculate diseases with most/least items
+  const diseaseMedCounts = Object.keys(medications.byDisease)
+    .map((disease) => ({
+      disease,
+      count: medications.byDisease[disease].length,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const diseaseTreatmentCounts = Object.keys(treatments.byDisease)
+    .map((disease) => ({
+      disease,
+      count: treatments.byDisease[disease].length,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  const diseaseTestCounts = Object.keys(tests.byDisease)
+    .map((disease) => ({
+      disease,
+      count: tests.byDisease[disease].length,
+    }))
+    .sort((a, b) => b.count - a.count);
+
+  statsSheet.addRow([
+    "Disease with most medications",
+    diseaseMedCounts.length > 0
+      ? `${diseaseMedCounts[0].disease} (${diseaseMedCounts[0].count})`
+      : "None",
+  ]);
+
+  statsSheet.addRow([
+    "Disease with most treatments",
+    diseaseTreatmentCounts.length > 0
+      ? `${diseaseTreatmentCounts[0].disease} (${diseaseTreatmentCounts[0].count})`
+      : "None",
+  ]);
+
+  statsSheet.addRow([
+    "Disease with most tests",
+    diseaseTestCounts.length > 0
+      ? `${diseaseTestCounts[0].disease} (${diseaseTestCounts[0].count})`
+      : "None",
+  ]);
+
+  // Calculate averages
+  const avgMedsPerDisease =
+    diseaseMedCounts.reduce((sum, item) => sum + item.count, 0) /
+    (diseaseMedCounts.length || 1);
+
+  const avgTreatmentsPerDisease =
+    diseaseTreatmentCounts.reduce((sum, item) => sum + item.count, 0) /
+    (diseaseTreatmentCounts.length || 1);
+
+  const avgTestsPerDisease =
+    diseaseTestCounts.reduce((sum, item) => sum + item.count, 0) /
+    (diseaseTestCounts.length || 1);
+
+  statsSheet.addRow([
+    "Average medications per disease",
+    avgMedsPerDisease.toFixed(2),
+  ]);
+  statsSheet.addRow([
+    "Average treatments per disease",
+    avgTreatmentsPerDisease.toFixed(2),
+  ]);
+  statsSheet.addRow([
+    "Average tests per disease",
+    avgTestsPerDisease.toFixed(2),
+  ]);
+  statsSheet.addRow([]);
+
+  // Medication Statistics
+  statsSheet.addRow(["MEDICATION STATISTICS"]);
+  statsSheet.getRow(statsSheet.rowCount).font = { bold: true };
+
+  // Calculate rarity/prevalence
+  const medRarity = {
+    veryCommon: medications.counts.filter((m) => m.count / data.length > 0.2)
+      .length,
+    common: medications.counts.filter(
+      (m) => m.count / data.length > 0.1 && m.count / data.length <= 0.2
+    ).length,
+    uncommon: medications.counts.filter(
+      (m) => m.count / data.length > 0.05 && m.count / data.length <= 0.1
+    ).length,
+    rare: medications.counts.filter((m) => m.count / data.length <= 0.05)
+      .length,
+    unique: medications.counts.filter((m) => m.count === 1).length,
+  };
+
+  statsSheet.addRow([
+    "Very common medications (>20% of diseases)",
+    medRarity.veryCommon,
+  ]);
+  statsSheet.addRow([
+    "Common medications (10-20% of diseases)",
+    medRarity.common,
+  ]);
+  statsSheet.addRow([
+    "Uncommon medications (5-10% of diseases)",
+    medRarity.uncommon,
+  ]);
+  statsSheet.addRow(["Rare medications (<5% of diseases)", medRarity.rare]);
+  statsSheet.addRow(["Unique medications (only 1 disease)", medRarity.unique]);
+  statsSheet.addRow([]);
+
+  // Treatment Statistics
+  statsSheet.addRow(["TREATMENT STATISTICS"]);
+  statsSheet.getRow(statsSheet.rowCount).font = { bold: true };
+
+  const treatRarity = {
+    veryCommon: treatments.counts.filter((t) => t.count / data.length > 0.2)
+      .length,
+    common: treatments.counts.filter(
+      (t) => t.count / data.length > 0.1 && t.count / data.length <= 0.2
+    ).length,
+    uncommon: treatments.counts.filter(
+      (t) => t.count / data.length > 0.05 && t.count / data.length <= 0.1
+    ).length,
+    rare: treatments.counts.filter((t) => t.count / data.length <= 0.05).length,
+    unique: treatments.counts.filter((t) => t.count === 1).length,
+  };
+
+  statsSheet.addRow([
+    "Very common treatments (>20% of diseases)",
+    treatRarity.veryCommon,
+  ]);
+  statsSheet.addRow([
+    "Common treatments (10-20% of diseases)",
+    treatRarity.common,
+  ]);
+  statsSheet.addRow([
+    "Uncommon treatments (5-10% of diseases)",
+    treatRarity.uncommon,
+  ]);
+  statsSheet.addRow(["Rare treatments (<5% of diseases)", treatRarity.rare]);
+  statsSheet.addRow(["Unique treatments (only 1 disease)", treatRarity.unique]);
+  statsSheet.addRow([]);
+
+  // Test Statistics
+  statsSheet.addRow(["TEST STATISTICS"]);
+  statsSheet.getRow(statsSheet.rowCount).font = { bold: true };
+
+  const testRarity = {
+    veryCommon: tests.counts.filter((t) => t.count / data.length > 0.2).length,
+    common: tests.counts.filter(
+      (t) => t.count / data.length > 0.1 && t.count / data.length <= 0.2
+    ).length,
+    uncommon: tests.counts.filter(
+      (t) => t.count / data.length > 0.05 && t.count / data.length <= 0.1
+    ).length,
+    rare: tests.counts.filter((t) => t.count / data.length <= 0.05).length,
+    unique: tests.counts.filter((t) => t.count === 1).length,
+  };
+
+  statsSheet.addRow([
+    "Very common tests (>20% of diseases)",
+    testRarity.veryCommon,
+  ]);
+  statsSheet.addRow(["Common tests (10-20% of diseases)", testRarity.common]);
+  statsSheet.addRow([
+    "Uncommon tests (5-10% of diseases)",
+    testRarity.uncommon,
+  ]);
+  statsSheet.addRow(["Rare tests (<5% of diseases)", testRarity.rare]);
+  statsSheet.addRow(["Unique tests (only 1 disease)", testRarity.unique]);
+  statsSheet.addRow([]);
+
+  // Correlation Data - Top diseases with multiple treatments/tests/medications
+  statsSheet.addRow(["CORRELATION DATA"]);
+  statsSheet.getRow(statsSheet.rowCount).font = { bold: true };
+
+  // Find diseases with comprehensive treatment (many tests, treatments and meds)
+  const comprehensiveTreatmentDiseases = [];
+
+  data.forEach((row) => {
+    const disease = row.Disease;
+    const medCount = medications.byDisease[disease]?.length || 0;
+    const treatCount = treatments.byDisease[disease]?.length || 0;
+    const testCount = tests.byDisease[disease]?.length || 0;
+
+    const totalItems = medCount + treatCount + testCount;
+
+    if (totalItems > 0) {
+      comprehensiveTreatmentDiseases.push({
+        disease,
+        totalItems,
+        medCount,
+        treatCount,
+        testCount,
+      });
+    }
+  });
+
+  comprehensiveTreatmentDiseases.sort((a, b) => b.totalItems - a.totalItems);
+
+  statsSheet.addRow([
+    "Disease",
+    "Total Items",
+    "Medications",
+    "Treatments",
+    "Tests",
+  ]);
+
+  // Show top 10 most comprehensively treated diseases
+  comprehensiveTreatmentDiseases.slice(0, 10).forEach((item) => {
+    statsSheet.addRow([
+      item.disease,
+      item.totalItems,
+      item.medCount,
+      item.treatCount,
+      item.testCount,
+    ]);
+  });
+
+  // Format correlation data table
+  const tableStartRow = statsSheet.rowCount - 10;
+  const tableEndRow = statsSheet.rowCount;
+
+  for (let i = tableStartRow; i <= tableEndRow; i++) {
+    const row = statsSheet.getRow(i);
+    row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" },
+      };
+    });
+  }
+
+  // Header row for correlation data
+  const correlationHeaderRow = statsSheet.getRow(tableStartRow);
+  correlationHeaderRow.font = { bold: true };
+  correlationHeaderRow.fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FFD3D3D3" },
+  };
+
+  // Auto-sizing for all columns in stats sheet
+  for (let i = 1; i <= 5; i++) {
+    statsSheet.getColumn(i).width = i === 1 ? 40 : 20;
+  }
+
+  // Save the workbook
+  console.log(`💾 Saving Excel file to: ${outputPath}`);
+  await workbook.xlsx.writeFile(outputPath);
+  console.log("✅ Excel report created successfully!");
 }
 
-// Main execution
-(function main() {
-  analyzeMayoClinicData();
-})();
+// Main function
+async function main() {
+  try {
+    // Input and output paths
+    const inputCsvPath = path.resolve(
+      __dirname,
+      "../CSV/diagnosis_treatment_data_final.csv"
+    );
+    const outputXlsxPath = path.resolve(
+      __dirname,
+      "../Analysis/medical_data_analysis.xlsx"
+    );
+
+    // Create analysis directory if it doesn't exist
+    const analysisDir = path.dirname(outputXlsxPath);
+    if (!fs.existsSync(analysisDir)) {
+      fs.mkdirSync(analysisDir, { recursive: true });
+      console.log(`📁 Created directory: ${analysisDir}`);
+    }
+
+    // Parse CSV
+    const data = parseCSV(inputCsvPath);
+
+    if (data.length === 0) {
+      throw new Error("No data found in CSV file");
+    }
+
+    console.log(`🧪 Analyzing ${data.length} diseases...`);
+
+    // Extract and count medications, treatments, tests
+    const medications = extractAndCountItems(data, "Medications");
+    const treatments = extractAndCountItems(data, "Treatment");
+    const tests = extractAndCountItems(data, "Tests");
+
+    // Log top items
+    console.log("\n📊 TOP 5 MEDICATIONS:");
+    medications.counts.slice(0, 5).forEach(({ item, count }) => {
+      console.log(`   - ${item}: ${count} diseases`);
+    });
+
+    console.log("\n📊 TOP 5 TREATMENTS:");
+    treatments.counts.slice(0, 5).forEach(({ item, count }) => {
+      console.log(`   - ${item}: ${count} diseases`);
+    });
+
+    console.log("\n📊 TOP 5 TESTS:");
+    tests.counts.slice(0, 5).forEach(({ item, count }) => {
+      console.log(`   - ${item}: ${count} diseases`);
+    });
+
+    // Create Excel report
+    await createExcelReport(
+      data,
+      medications,
+      treatments,
+      tests,
+      outputXlsxPath
+    );
+
+    console.log(`\n🎉 ANALYSIS COMPLETE!`);
+    console.log(`📊 Excel report saved to: ${outputXlsxPath}`);
+  } catch (error) {
+    console.error(`❌ Error: ${error.message}`);
+    console.error(error);
+  }
+}
+
+// Execute the script
+main();
