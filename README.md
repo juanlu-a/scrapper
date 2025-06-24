@@ -13,4 +13,6 @@
 2. Run `drugs-scrapper.js`, which gets the wanted data.
 3. `drugs-analyze-data.js` (optional), gets stats from the data, and also save it into a .xlsx.
 
+Note: the `analyze-data` of each one get its data saved on the directory `Analysis`
+
 Note: Json for checkpoints are created, can be deleted.
