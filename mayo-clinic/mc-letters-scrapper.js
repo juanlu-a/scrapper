@@ -5,7 +5,7 @@ const fs = require("fs");
 
 // Create CSV writer for the output
 const csvWriter = createCsvWriter({
-  path: "../CSV/diseases_all_letters.csv",
+  path: "/Users/juanlu/Documents/Wye/scrapper/CSV/diseases_all_letters.csv",
   header: [
     { id: "disease", title: "Disease" },
     { id: "href", title: "Href" },

@@ -99,7 +99,7 @@ async function processExistingDiseasesCSV() {
 
     // Create CSV writer for the output with diagnosis URLs
     const csvWriter = createCsvWriter({
-      path: "../CSV/diseases_with_diagnosis_urls.csv",
+      path: "/Users/juanlu/Documents/Wye/scrapper/CSV/diseases_with_diagnosis_urls.csv",
       header: [
         { id: "disease", title: "Disease" },
         { id: "symptoms_href", title: "Symptoms_URL" },
@@ -110,7 +110,7 @@ async function processExistingDiseasesCSV() {
 
     // Read the diseases_all_letters.csv file
     const csvContent = fs.readFileSync(
-      "../CSV/diseases_all_letters.csv",
+      "/Users/juanlu/Documents/Wye/scrapper/CSV/diseases_all_letters.csv",
       "utf8"
     );
     const lines = csvContent.split("\n").slice(1); // Skip header

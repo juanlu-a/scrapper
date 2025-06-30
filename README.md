@@ -11,7 +11,10 @@
 
 1. Run `drugs-letters-scrapper.js`, this retrieve the hrefs of each drug.
 2. Run `drugs-scrapper.js`, which gets the wanted data.
-3. `drugs-analyze-data.js` (optional), gets stats from the data, and also save it into a .xlsx.
+3. `drugs-analyse-data.js` (optional), gets stats from the data, and also save it into a .xlsx.
+
+4. Run `drugs-diseases-scrapper.js` and `drugs-diseases-analyze.js` for retrieving
+   diseases associated with its drugs.
 
 Note: the `analyze-data` of each one get its data saved on the directory `Analysis`
 
