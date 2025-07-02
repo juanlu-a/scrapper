@@ -247,14 +247,14 @@ def setup_disease_sheet_v3(ws, disease_row, disease_name, drug_df):
     ws['A8'] = 'Diagnosis Process:'
     ws['A8'].font = Font(bold=True)
     
-    # Split long text into multiple cells for better readability
-    diagnosis_chunks = split_text_into_chunks(diagnosis_text, 120)
-    for i, chunk in enumerate(diagnosis_chunks):
-        ws[f'B{8+i}'] = chunk
-        ws[f'B{8+i}'].alignment = Alignment(wrap_text=True, vertical='top')
+    # Put all diagnosis text in one cell (B8) - user will manually merge cells for readability
+    ws['B8'] = diagnosis_text
+    ws['B8'].alignment = Alignment(wrap_text=True, vertical='top')
+    # Set a taller row height for the diagnosis text
+    ws.row_dimensions[8].height = max(60, min(200, len(diagnosis_text) // 10))
     
-    # Calculate next row
-    next_row = 8 + len(diagnosis_chunks) + 2
+    # Calculate next row (just one row for diagnosis now)
+    next_row = 10
     
     # Treatments Section
     ws[f'A{next_row}'] = 'TREATMENTS'
@@ -264,15 +264,17 @@ def setup_disease_sheet_v3(ws, disease_row, disease_name, drug_df):
     ws[f'A{next_row}'].alignment = Alignment(horizontal='center')
     
     treatments = disease_row['Treatments'] if pd.notna(disease_row['Treatments']) else 'No treatment information available'
-    treatment_list = treatments.split(';') if pd.notna(disease_row['Treatments']) else ['No treatments listed']
     
     ws[f'A{next_row+1}'] = 'Available Treatments:'
     ws[f'A{next_row+1}'].font = Font(bold=True)
-    for i, treatment in enumerate(treatment_list):
-        ws[f'B{next_row+1+i}'] = f"• {treatment.strip()}"
+    # Put all treatment text in one cell - user will manually merge cells for readability
+    ws[f'B{next_row+1}'] = treatments
+    ws[f'B{next_row+1}'].alignment = Alignment(wrap_text=True, vertical='top')
+    # Set row height based on content length
+    ws.row_dimensions[next_row+1].height = max(60, min(200, len(treatments) // 10))
     
-    # Calculate next row
-    next_row = next_row + 1 + len(treatment_list) + 2
+    # Calculate next row (just one row for treatments now)
+    next_row = next_row + 3
     
     # Tests Section  
     ws[f'A{next_row}'] = 'DIAGNOSTIC TESTS'
@@ -282,15 +284,17 @@ def setup_disease_sheet_v3(ws, disease_row, disease_name, drug_df):
     ws[f'A{next_row}'].alignment = Alignment(horizontal='center')
     
     tests = disease_row['Tests'] if pd.notna(disease_row['Tests']) else 'No test information available'
-    test_list = tests.split(';') if pd.notna(disease_row['Tests']) else ['No tests listed']
     
     ws[f'A{next_row+1}'] = 'Diagnostic Tests:'
     ws[f'A{next_row+1}'].font = Font(bold=True)
-    for i, test in enumerate(test_list):
-        ws[f'B{next_row+1+i}'] = f"• {test.strip()}"
+    # Put all test text in one cell - user will manually merge cells for readability
+    ws[f'B{next_row+1}'] = tests
+    ws[f'B{next_row+1}'].alignment = Alignment(wrap_text=True, vertical='top')
+    # Set row height based on content length
+    ws.row_dimensions[next_row+1].height = max(60, min(200, len(tests) // 10))
     
-    # Calculate next row
-    next_row = next_row + 1 + len(test_list) + 2
+    # Calculate next row (just one row for tests now)
+    next_row = next_row + 3
     
     # Enhanced Medications Section
     ws[f'A{next_row}'] = 'MEDICATIONS & DRUGS - DETAILED INFORMATION'
