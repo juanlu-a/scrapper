@@ -12,7 +12,20 @@ import os
 
 class DrugsScraper:
     def __init__(self, headless=False):
-        self.driver = self.setup_driver(headless)
+        self.headless = headless
+        self.driver = None
+        self.wait = None
+        self.init_driver()
+        
+    def init_driver(self):
+        """Initialize or reinitialize the driver"""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+        
+        self.driver = self.setup_driver(self.headless)
         self.wait = WebDriverWait(self.driver, 10)
         
     def setup_driver(self, headless=False):
@@ -29,16 +42,61 @@ class DrugsScraper:
         driver = webdriver.Chrome(options=chrome_options)
         driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         return driver
+    
+    def check_connection(self):
+        """Check if the driver connection is still alive"""
+        try:
+            # Try to get current URL - if this fails, connection is lost
+            self.driver.current_url
+            return True
+        except Exception as e:
+            print(f"  ⚠️  Connection lost: {e}")
+            return False
+    
+    def reconnect_if_needed(self):
+        """Reconnect to the driver if connection is lost"""
+        if not self.check_connection():
+            print("  🔄 Reconnecting to browser...")
+            self.init_driver()
+            time.sleep(3)
+            return True
+        return False
+    
+    def safe_driver_action(self, action, *args, **kwargs):
+        """Execute a driver action with automatic reconnection on failure"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Check connection before action
+                if not self.check_connection():
+                    print(f"  🔄 Reconnecting before action (attempt {attempt + 1})")
+                    self.init_driver()
+                    time.sleep(3)
+                
+                # Execute the action
+                return action(*args, **kwargs)
+                
+            except Exception as e:
+                print(f"  ⚠️  Action failed (attempt {attempt + 1}): {e}")
+                if attempt < max_retries - 1:
+                    print(f"  🔄 Reinitializing driver and retrying...")
+                    self.init_driver()
+                    time.sleep(5)
+                else:
+                    raise e
         
     def search_and_get_side_effects(self, medication):
-        """Search for medication and get side effects content"""
+        """Search for medication and get side effects content with reconnection handling"""
         try:
             print(f"🔍 Processing: {medication}")
             
-            # Step 1: Go to drugs.com with retry logic
+            # Step 1: Go to drugs.com with retry logic and connection check
+            def load_drugs_com():
+                return self.driver.get("https://www.drugs.com")
+            
             for attempt in range(3):
                 try:
-                    self.driver.get("https://www.drugs.com")
+                    self.safe_driver_action(load_drugs_com)
                     break
                 except Exception as e:
                     print(f"    Attempt {attempt + 1} failed to load drugs.com: {e}")
@@ -48,90 +106,112 @@ class DrugsScraper:
             
             time.sleep(3)
             
-            # Step 2: Search for medication
-            try:
+            # Step 2: Search for medication with connection safety
+            def search_medication():
                 search_box = self.wait.until(EC.presence_of_element_located((By.NAME, "searchterm")))
                 search_box.clear()
                 search_box.send_keys(medication)
                 search_box.send_keys(Keys.RETURN)
+                return True
+            
+            try:
+                self.safe_driver_action(search_medication)
                 print(f"  ✅ Search submitted for: {medication}")
             except Exception as e:
                 return f"❌ Failed to search for {medication}: {str(e)}"
             
-            # Step 3: Find main medication result with multiple attempts
-            for attempt in range(3):
-                main_result = self.find_main_medication_result(medication)
-                if main_result:
-                    break
-                elif attempt < 2:
-                    print(f"    🔄 Attempt {attempt + 1} failed, trying again...")
-                    time.sleep(3)
-                else:
-                    return f"❌ Could not find main result for {medication} after 3 attempts"
+            # Step 3: Find main medication result
+            main_result = self.find_main_medication_result(medication)
+            if not main_result:
+                return f"❌ Could not find main result for {medication}"
             
-            # Step 4: Click on main result with retry
-            try:
+            # Step 4: Click on main result with retry and connection safety
+            def click_main_result():
                 self.driver.execute_script("arguments[0].scrollIntoView(true);", main_result)
                 time.sleep(1)
                 main_result.click()
+                return True
+            
+            try:
+                self.safe_driver_action(click_main_result)
                 print(f"  ✅ Clicked main result for {medication}")
             except Exception as e:
                 # Try JavaScript click as fallback
                 try:
-                    self.driver.execute_script("arguments[0].click();", main_result)
+                    def js_click_main():
+                        self.driver.execute_script("arguments[0].click();", main_result)
+                        return True
+                    
+                    self.safe_driver_action(js_click_main)
                     print(f"  ✅ Clicked main result (JS) for {medication}")
                 except Exception as e2:
                     return f"❌ Failed to click main result for {medication}: {str(e2)}"
             
             time.sleep(4)
             
-            # Step 5: Find and click side effects link with multiple attempts
-            for attempt in range(3):
-                side_effects_link = self.find_side_effects_link()
-                if side_effects_link:
-                    break
-                elif attempt < 2:
-                    print(f"    🔄 Attempt {attempt + 1} failed to find side effects link, trying again...")
-                    time.sleep(3)
-                else:
-                    return f"❌ Could not find side effects link for {medication} after 3 attempts"
+            # Step 5: Find and click side effects link
+            side_effects_link = self.find_side_effects_link()
+            if not side_effects_link:
+                return f"❌ Could not find side effects link for {medication}"
             
-            # Step 6: Click side effects link
-            try:
+            # Step 6: Click side effects link with connection safety
+            def click_side_effects():
                 self.driver.execute_script("arguments[0].scrollIntoView(true);", side_effects_link)
                 time.sleep(1)
                 side_effects_link.click()
+                return True
+            
+            try:
+                self.safe_driver_action(click_side_effects)
                 print(f"  ✅ Clicked side effects link for {medication}")
             except Exception as e:
                 # Try JavaScript click as fallback
                 try:
-                    self.driver.execute_script("arguments[0].click();", side_effects_link)
+                    def js_click_side_effects():
+                        self.driver.execute_script("arguments[0].click();", side_effects_link)
+                        return True
+                    
+                    self.safe_driver_action(js_click_side_effects)
                     print(f"  ✅ Clicked side effects link (JS) for {medication}")
                 except Exception as e2:
                     return f"❌ Failed to click side effects link for {medication}: {str(e2)}"
             
-            time.sleep(5)  # Longer wait for page load
+            time.sleep(4)
             
-            # Step 7: Extract ALL side effects content (raw data)
-            content = self.extract_all_side_effects_content(medication)
+            # Step 7: Extract side effects content
+            content = self.extract_side_effects_content(medication)
             
-            if content and len(content) > 30:  # Lower threshold for raw content
+            if content and len(content) > 50:
                 print(f"  ✅ Successfully processed {medication} ({len(content)} characters)")
                 return content
             else:
-                return f"❌ No side effects content found for {medication}"
+                return f"❌ No substantial side effects content found for {medication}"
             
         except Exception as e:
             error_msg = f"❌ Unexpected error processing {medication}: {str(e)}"
             print(error_msg)
+            # Try to recover by reinitializing driver
+            try:
+                print("  🔄 Attempting to recover from error...")
+                self.init_driver()
+                time.sleep(3)
+            except:
+                pass
             return error_msg
     
     def find_main_medication_result(self, medication):
         """Find the main medication result (usually with yellow star)"""
         print(f"  🔍 Looking for main result for: {medication}")
         
-        # Wait longer for search results to load
-        time.sleep(7)  # Increased wait time
+        # Wait a bit longer for search results to load
+        time.sleep(5)
+        
+        # Check connection before searching
+        if not self.check_connection():
+            print("  🔄 Reconnecting before searching for results...")
+            self.init_driver()
+            time.sleep(3)
+            return None
         
         # Try multiple approaches to find the main result
         approaches = [
@@ -168,7 +248,11 @@ class DrugsScraper:
             
             for selector in approach['selectors']:
                 try:
-                    results = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    # Use safe driver action to find elements
+                    def find_results():
+                        return self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    
+                    results = self.safe_driver_action(find_results)
                     print(f"      Found {len(results)} results with selector: {selector}")
                     
                     for i, result in enumerate(results):
@@ -236,8 +320,15 @@ class DrugsScraper:
         """Find the side effects navigation link"""
         print(f"  🔍 Looking for side effects link...")
         
-        # Wait longer for page to fully load
-        time.sleep(5)  # Increased wait time
+        # Wait for page to fully load
+        time.sleep(3)
+        
+        # Check connection before searching
+        if not self.check_connection():
+            print("  🔄 Reconnecting before searching for side effects link...")
+            self.init_driver()
+            time.sleep(3)
+            return None
         
         # Try multiple approaches to find side effects link
         approaches = [
@@ -332,94 +423,96 @@ class DrugsScraper:
         
         return None
     
-    def extract_all_side_effects_content(self, medication):
-        """Extract ALL raw side effects content from the page - no filtering"""
+    def extract_side_effects_content(self, medication):
+        """Extract ONLY side effects content from the page"""
         try:
-            print(f"  📋 Extracting ALL side effects content for {medication}...")
+            content_parts = []
             
-            # Wait for page to fully load
-            time.sleep(3)
-            
-            # Get the entire page content first
-            page_content = self.driver.page_source
-            
-            # Try to find the main content area of the side effects page
-            content_selectors = [
-                "main",
-                "#content", 
-                ".content",
-                ".main-content",
-                ".drug-content",
-                ".page-content",
-                "article",
-                ".container",
-                "body"
+            # Try to find specific side effects sections first
+            selectors_to_try = [
+                "#side-effects",
+                ".side-effects", 
+                "[id*='side-effects']",
+                "[class*='side-effects']"
             ]
             
-            raw_content = ""
-            
-            for selector in content_selectors:
+            content_found = False
+            for selector in selectors_to_try:
                 try:
-                    content_element = self.driver.find_element(By.CSS_SELECTOR, selector)
-                    if content_element:
-                        # Get all text content from this section
-                        element_text = content_element.text.strip()
-                        if element_text and len(element_text) > 500:  # Must have substantial content
-                            raw_content = element_text
-                            print(f"  ✅ Found content using selector: {selector}")
+                    section = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if section:
+                        text = section.text.strip()
+                        if text and len(text) > 100:  # Ensure we have substantial side effects content
+                            content_parts.append(text)
+                            content_found = True
                             break
                 except:
                     continue
             
-            # If no main content found, try getting all visible text
-            if not raw_content:
+            # If no specific side effects section found, look for side effects text patterns
+            if not content_found:
+                # Look for headings containing "side effects"
                 try:
-                    # Get all text from body
-                    body_element = self.driver.find_element(By.TAG_NAME, "body")
-                    raw_content = body_element.text.strip()
-                    print(f"  ✅ Using full body content")
+                    headings = self.driver.find_elements(By.XPATH, "//h1[contains(text(), 'side effects')] | //h2[contains(text(), 'side effects')] | //h3[contains(text(), 'side effects')]")
+                    for heading in headings:
+                        # Get content after the heading
+                        content_parts.append(f"--- {heading.text} ---")
+                        
+                        # Find the next elements that contain side effects info
+                        next_element = heading.find_element(By.XPATH, "./following-sibling::*")
+                        while next_element and next_element.tag_name not in ['h1', 'h2', 'h3']:
+                            text = next_element.text.strip()
+                            if text:
+                                content_parts.append(text)
+                            try:
+                                next_element = next_element.find_element(By.XPATH, "./following-sibling::*")
+                            except:
+                                break
+                        content_found = True
+                        break
                 except:
-                    return f"❌ Could not extract any content for {medication}"
+                    pass
             
-            if raw_content:
-                # Basic cleanup only - keep raw content
-                cleaned_content = self.basic_cleanup(raw_content)
-                
-                # Verify this is actually a side effects page
-                if any(keyword in cleaned_content.lower() for keyword in [
-                    'side effect', 'adverse', 'reaction', 'warning', 'precaution',
-                    'contraindication', 'interaction', 'dosage', 'drug information'
-                ]):
-                    return cleaned_content
-                else:
-                    return f"❌ Page content does not appear to be side effects information for {medication}"
+            # If still no content, look for paragraphs containing side effects keywords
+            if not content_found:
+                try:
+                    paragraphs = self.driver.find_elements(By.TAG_NAME, "p")
+                    for p in paragraphs:
+                        text = p.text.strip().lower()
+                        if any(keyword in text for keyword in ['side effect', 'adverse', 'reaction', 'emergency', 'call your doctor', 'serious']):
+                            content_parts.append(p.text.strip())
+                except:
+                    pass
             
-            return f"❌ No content extracted for {medication}"
+            if content_parts:
+                content = '\n\n'.join(content_parts)
+                # Clean up the content
+                content = self.clean_content(content)
+                return content
+            else:
+                return f"No specific side effects content found for {medication}"
             
         except Exception as e:
-            return f"❌ Error extracting content for {medication}: {str(e)}"
+            return f"Error extracting side effects content: {str(e)}"
     
-    def basic_cleanup(self, content):
-        """Basic cleanup of raw content - minimal processing"""
-        # Remove excessive whitespace but keep structure
+    def clean_content(self, content):
+        """Clean and format the side effects content"""
+        # Remove excessive whitespace and unwanted elements
         lines = content.split('\n')
         cleaned_lines = []
         
         for line in lines:
             line = line.strip()
-            if line:  # Keep all non-empty lines
-                # Only filter out obvious navigation/footer elements
-                if not any(skip in line.lower() for skip in [
-                    'skip to main content', 'breadcrumb', 'footer', 'copyright',
-                    'privacy policy', 'terms of use', 'contact us', 'site map',
-                    'advertisement', 'cookie policy', 'subscribe', 'newsletter'
-                ]):
-                    cleaned_lines.append(line)
+            if line and not any(skip in line.lower() for skip in [
+                'advertisement', 'ads by', 'sponsored', 'cookie', 'privacy',
+                'terms of use', 'about us', 'contact us', 'site map'
+            ]):
+                cleaned_lines.append(line)
         
-        # Join lines and limit consecutive newlines to 2
+        # Join lines and remove excessive blank lines
         content = '\n'.join(cleaned_lines)
         
-        # Remove excessive blank lines (more than 2)
+        # Remove multiple consecutive newlines
         while '\n\n\n' in content:
             content = content.replace('\n\n\n', '\n\n')
         
@@ -427,7 +520,7 @@ class DrugsScraper:
     
     def add_delay(self):
         """Add random delay between requests"""
-        delay = random.uniform(3.0, 5.0)  # Longer delays - 4 seconds average
+        delay = random.uniform(1.5, 2.5)  # Shorter delays - 2 seconds average
         print(f"  ⏰ Waiting {delay:.1f} seconds before next request...")
         time.sleep(delay)
     
@@ -466,25 +559,20 @@ def update_excel_with_side_effects(max_medications=None):
     
     print(f"📊 Processing {len(medications)} medications...")
     
-    # Add new column header for Full Information
-    if not medications_ws['G8'].value or 'FULL INFORMATION' not in str(medications_ws['G8'].value):
-        medications_ws['G8'] = 'FULL INFORMATION'
-        medications_ws['G8'].font = Font(bold=True, color="FFFFFF")
-        medications_ws['G8'].fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
-        medications_ws['G8'].border = Border(
+    # Add new column header if not exists
+    if not medications_ws['H8'].value or 'FULL INFORMATION' not in str(medications_ws['H8'].value):
+        medications_ws['H8'] = 'SIDE EFFECTS'
+        medications_ws['H8'].font = Font(bold=True, color="FFFFFF")
+        medications_ws['H8'].fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+        medications_ws['H8'].border = Border(
             left=Side(style='thin'), right=Side(style='thin'),
             top=Side(style='thin'), bottom=Side(style='thin')
         )
-        medications_ws['G8'].alignment = Alignment(horizontal='center', vertical='center')
-        medications_ws.column_dimensions['G'].width = 100
+        medications_ws['H8'].alignment = Alignment(horizontal='center', vertical='center')
+        medications_ws.column_dimensions['H'].width = 80
     
-    # Remove selenium column (column H) if it exists
-    if medications_ws['H8'].value and 'selenium' in str(medications_ws['H8'].value).lower():
-        medications_ws.delete_cols(8, 1)  # Delete column H
-        print("🗑️ Removed selenium column")
-    
-    # Initialize scraper with visible mode for better results
-    scraper = DrugsScraper(headless=False)  # Use visible mode for better debugging
+    # Initialize scraper
+    scraper = DrugsScraper(headless=True)  # Use headless mode for faster processing
     
     try:
         processed_count = 0
@@ -493,15 +581,35 @@ def update_excel_with_side_effects(max_medications=None):
         for i, medication in enumerate(medications):
             print(f"\n[{i+1}/{len(medications)}] Processing: {medication}")
             
-            # Get side effects content
-            content = scraper.search_and_get_side_effects(medication)
+            # Check if scraper connection is still alive
+            if not scraper.check_connection():
+                print("  🔄 Reconnecting scraper...")
+                scraper.init_driver()
+                time.sleep(5)
             
-            # Add to Excel in column G (Full Information)
+            # Get side effects content with retry on connection errors
+            max_retries = 3
+            content = None
+            
+            for attempt in range(max_retries):
+                try:
+                    content = scraper.search_and_get_side_effects(medication)
+                    break
+                except Exception as e:
+                    print(f"  ⚠️  Attempt {attempt + 1} failed: {e}")
+                    if attempt < max_retries - 1:
+                        print("  🔄 Reinitializing scraper and retrying...")
+                        scraper.init_driver()
+                        time.sleep(10)  # Longer wait after reconnection
+                    else:
+                        content = f"❌ Failed to process {medication} after {max_retries} attempts"
+            
+            # Add to Excel
             row_num = 9 + i
-            medications_ws[f'G{row_num}'] = content
+            medications_ws[f'H{row_num}'] = content
             
             # Format cell
-            cell = medications_ws[f'G{row_num}']
+            cell = medications_ws[f'H{row_num}']
             cell.border = Border(
                 left=Side(style='thin'), right=Side(style='thin'),
                 top=Side(style='thin'), bottom=Side(style='thin')
@@ -550,19 +658,20 @@ def update_excel_with_side_effects(max_medications=None):
             print(f"   ... and {len(errors) - 10} more")
 
 if __name__ == "__main__":
-    print("🚀 Starting ENHANCED Drugs.com Side Effects Scraper")
+    print("🚀 Starting SLEEP-RESISTANT Drugs.com Side Effects Scraper")
     print("="*60)
     print("🔧 Enhanced features:")
-    print("   - Extracts ALL raw side effects content")
-    print("   - Longer delays (4 seconds average)")
-    print("   - More thorough search and navigation")
-    print("   - Stores raw data in 'Full Information' column")
-    print("   - Visible browser for better debugging")
+    print("   - Automatic reconnection after computer sleep")
+    print("   - Connection health monitoring")
+    print("   - Robust error recovery")
+    print("   - Multiple retry attempts")
+    print("   - Safe driver actions")
     print("="*60)
     
-    # Run full scraper for ALL medications
-    print("🚀 Running FULL scraper for ALL medications...")
-    update_excel_with_side_effects(max_medications=None)
+    # Test with first 3 medications to verify sleep resistance
+    print("🧪 Testing with first 3 medications...")
+    update_excel_with_side_effects(max_medications=3)
     
     print("\n" + "="*60)
-    print("🎉 FULL SCRAPING WITH RAW DATA COMPLETED!")
+    print("💤 If test successful, the scraper can now handle computer sleep!")
+    print("📝 Change max_medications=None to run full scraper")
