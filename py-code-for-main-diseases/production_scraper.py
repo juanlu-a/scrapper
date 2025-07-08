@@ -560,16 +560,16 @@ def update_excel_with_side_effects(max_medications=None):
     print(f"📊 Processing {len(medications)} medications...")
     
     # Add new column header if not exists
-    if not medications_ws['H8'].value or 'FULL INFORMATION' not in str(medications_ws['H8'].value):
-        medications_ws['H8'] = 'SIDE EFFECTS'
-        medications_ws['H8'].font = Font(bold=True, color="FFFFFF")
-        medications_ws['H8'].fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
-        medications_ws['H8'].border = Border(
+    if not medications_ws['G8'].value or 'FULL INFORMATION' not in str(medications_ws['G8'].value):
+        medications_ws['G8'] = 'FULL INFORMATION'
+        medications_ws['G8'].font = Font(bold=True, color="FFFFFF")
+        medications_ws['G8'].fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+        medications_ws['G8'].border = Border(
             left=Side(style='thin'), right=Side(style='thin'),
             top=Side(style='thin'), bottom=Side(style='thin')
         )
-        medications_ws['H8'].alignment = Alignment(horizontal='center', vertical='center')
-        medications_ws.column_dimensions['H'].width = 80
+        medications_ws['G8'].alignment = Alignment(horizontal='center', vertical='center')
+        medications_ws.column_dimensions['G'].width = 100
     
     # Initialize scraper
     scraper = DrugsScraper(headless=True)  # Use headless mode for faster processing
@@ -668,10 +668,9 @@ if __name__ == "__main__":
     print("   - Safe driver actions")
     print("="*60)
     
-    # Test with first 3 medications to verify sleep resistance
-    print("🧪 Testing with first 3 medications...")
-    update_excel_with_side_effects(max_medications=3)
+    # Run FULL scraper for ALL medications
+    print("🚀 Running FULL scraper for ALL medications...")
+    update_excel_with_side_effects(max_medications=None)
     
     print("\n" + "="*60)
-    print("💤 If test successful, the scraper can now handle computer sleep!")
-    print("📝 Change max_medications=None to run full scraper")
+    print("🎉 FULL SCRAPING COMPLETED!")
