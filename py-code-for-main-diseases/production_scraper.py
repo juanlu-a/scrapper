@@ -36,18 +36,134 @@ class DrugsScraper:
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-web-security")
+        chrome_options.add_argument("--disable-features=VizDisplayCompositor")
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option('useAutomationExtension', False)
         
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-        return driver
+        # Add user agent to avoid detection
+        chrome_options.add_argument("--user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        
+        try:
+            driver = webdriver.Chrome(options=chrome_options)
+            driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            
+            # Ensure we start with a valid page
+            driver.get("https://www.drugs.com")
+            time.sleep(2)
+            
+            return driver
+        except Exception as e:
+            print(f"❌ Error setting up Chrome driver: {e}")
+            raise e
+    
+    def close_modal_popups(self):
+        """Close any modal popups that might be blocking the page"""
+        try:
+            # Common modal close selectors
+            close_selectors = [
+                # Newsletter/subscription modals
+                "button[aria-label='Close']",
+                "button[aria-label='close']", 
+                ".close",
+                ".modal-close",
+                ".popup-close",
+                "[data-dismiss='modal']",
+                ".newsletter-close",
+                # X buttons
+                "button:contains('×')",
+                "span:contains('×')",
+                "div:contains('×')",
+                # Close text buttons
+                "button:contains('Close')",
+                "button:contains('close')",
+                "a:contains('Close')",
+                "a:contains('close')",
+                # Generic close buttons
+                ".btn-close",
+                ".close-button",
+                ".close-btn"
+            ]
+            
+            for selector in close_selectors:
+                try:
+                    if selector.startswith("button:contains") or selector.startswith("span:contains") or selector.startswith("div:contains") or selector.startswith("a:contains"):
+                        # XPath for text content
+                        text = selector.split("'")[1]
+                        elements = self.driver.find_elements(By.XPATH, f"//*[contains(text(), '{text}')]")
+                    else:
+                        # CSS selector
+                        elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            try:
+                                # Try regular click first
+                                element.click()
+                                print(f"    ✅ Closed modal using selector: {selector}")
+                                time.sleep(1)
+                                return True
+                            except:
+                                try:
+                                    # Try JavaScript click
+                                    self.driver.execute_script("arguments[0].click();", element)
+                                    print(f"    ✅ Closed modal (JS) using selector: {selector}")
+                                    time.sleep(1)
+                                    return True
+                                except:
+                                    continue
+                except:
+                    continue
+            
+            # Try pressing Escape key as fallback
+            try:
+                from selenium.webdriver.common.keys import Keys
+                self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                print("    ✅ Sent ESC key to close modal")
+                time.sleep(1)
+                return True
+            except:
+                pass
+            
+            return False
+            
+        except Exception as e:
+            print(f"    ⚠️  Error closing modals: {e}")
+            return False
+
+    def ensure_valid_page(self):
+        """Ensure we're on a valid drugs.com page"""
+        try:
+            current_url = self.driver.current_url
+            
+            # If we're on data:, or invalid page, go to drugs.com
+            if current_url.startswith("data:") or "drugs.com" not in current_url or current_url == "about:blank":
+                print(f"  🔄 Invalid page detected ({current_url}), navigating to drugs.com...")
+                self.driver.get("https://www.drugs.com")
+                time.sleep(3)
+                
+                # Verify the navigation worked
+                new_url = self.driver.current_url
+                if new_url.startswith("data:") or "drugs.com" not in new_url:
+                    raise Exception(f"Failed to navigate to valid page, still on: {new_url}")
+                
+                print(f"  ✅ Successfully navigated to: {new_url}")
+                
+        except Exception as e:
+            print(f"  ❌ Error ensuring valid page: {e}")
+            raise e
     
     def check_connection(self):
         """Check if the driver connection is still alive"""
         try:
             # Try to get current URL - if this fails, connection is lost
-            self.driver.current_url
+            current_url = self.driver.current_url
+            
+            # Check if we're on a valid page (not data:, or empty)
+            if current_url.startswith("data:") or not current_url or current_url == "about:blank":
+                print(f"  ⚠️  Invalid URL detected: {current_url}")
+                return False
+                
             return True
         except Exception as e:
             print(f"  ⚠️  Connection lost: {e}")
@@ -61,6 +177,117 @@ class DrugsScraper:
             time.sleep(3)
             return True
         return False
+    
+    def close_modal_popups(self):
+        """Close any modal popups that might be blocking the page"""
+        try:
+            # List of selectors for common modal close buttons
+            close_selectors = [
+                # Generic close buttons
+                "button[aria-label*='close']",
+                "button[aria-label*='Close']",
+                "button[title*='close']",
+                "button[title*='Close']",
+                ".close-button",
+                ".close-btn",
+                ".modal-close",
+                ".popup-close",
+                "button.close",
+                "[data-dismiss='modal']",
+                
+                # Newsletter modal specific (like in the screenshot)
+                ".newsletter-modal .close",
+                ".newsletter-modal button[type='button']",
+                ".modal-dialog .close",
+                ".modal-dialog button[aria-label*='close']",
+                
+                # X buttons
+                "button:contains('×')",
+                "span:contains('×')",
+                ".fa-times",
+                ".fa-close",
+                
+                # Other common patterns
+                ".overlay-close",
+                ".lightbox-close",
+                ".dialog-close"
+            ]
+            
+            closed_modal = False
+            
+            for selector in close_selectors:
+                try:
+                    if selector.startswith("button:contains") or selector.startswith("span:contains"):
+                        # Use XPath for text-based selectors
+                        xpath = f"//button[contains(text(), '×')] | //span[contains(text(), '×')]"
+                        close_buttons = self.driver.find_elements(By.XPATH, xpath)
+                    else:
+                        close_buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    
+                    for button in close_buttons:
+                        try:
+                            # Check if button is visible and clickable
+                            if button.is_displayed() and button.is_enabled():
+                                # Try direct click first
+                                button.click()
+                                print(f"  ✅ Closed modal using selector: {selector}")
+                                closed_modal = True
+                                time.sleep(1)  # Give time for modal to close
+                                break
+                        except:
+                            try:
+                                # Try JavaScript click as fallback
+                                self.driver.execute_script("arguments[0].click();", button)
+                                print(f"  ✅ Closed modal (JS) using selector: {selector}")
+                                closed_modal = True
+                                time.sleep(1)
+                                break
+                            except:
+                                continue
+                    
+                    if closed_modal:
+                        break
+                        
+                except Exception as e:
+                    continue
+            
+            # Also try to press Escape key to close modals
+            if not closed_modal:
+                try:
+                    from selenium.webdriver.common.keys import Keys
+                    self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+                    print("  ✅ Sent Escape key to close modal")
+                    time.sleep(1)
+                except:
+                    pass
+            
+            # Check for overlay backgrounds and click them
+            try:
+                overlay_selectors = [
+                    ".modal-backdrop",
+                    ".overlay",
+                    ".modal-overlay",
+                    ".popup-overlay",
+                    ".lightbox-overlay"
+                ]
+                
+                for overlay_selector in overlay_selectors:
+                    overlays = self.driver.find_elements(By.CSS_SELECTOR, overlay_selector)
+                    for overlay in overlays:
+                        if overlay.is_displayed():
+                            try:
+                                overlay.click()
+                                print(f"  ✅ Clicked overlay to close modal: {overlay_selector}")
+                                time.sleep(1)
+                                break
+                            except:
+                                continue
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"  ⚠️  Error closing modals: {e}")
+            pass
     
     def safe_driver_action(self, action, *args, **kwargs):
         """Execute a driver action with automatic reconnection on failure"""
@@ -90,24 +317,55 @@ class DrugsScraper:
         try:
             print(f"🔍 Processing: {medication}")
             
-            # Step 1: Go to drugs.com with retry logic and connection check
+            # Ensure we start with a valid page
+            self.ensure_valid_page()
+            
+            # Close any modals that might be open
+            self.close_modal_popups()
+            
+            # Step 1: Go to drugs.com with better error handling
             def load_drugs_com():
-                return self.driver.get("https://www.drugs.com")
+                print("    Loading drugs.com...")
+                self.driver.get("https://www.drugs.com")
+                time.sleep(2)
+                
+                # Verify we're on the correct page
+                current_url = self.driver.current_url
+                if current_url.startswith("data:") or "drugs.com" not in current_url:
+                    raise Exception(f"Failed to load drugs.com, got URL: {current_url}")
+                
+                print(f"    ✅ Successfully loaded: {current_url}")
+                
+                # Close any modals that might have opened
+                time.sleep(2)
+                self.close_modal_popups()
+                
+                return True
             
             for attempt in range(3):
                 try:
-                    self.safe_driver_action(load_drugs_com)
+                    load_drugs_com()
                     break
                 except Exception as e:
                     print(f"    Attempt {attempt + 1} failed to load drugs.com: {e}")
                     if attempt == 2:
                         return f"❌ Failed to load drugs.com after 3 attempts"
+                    
+                    # Reinitialize driver on failure
+                    print("    🔄 Reinitializing driver...")
+                    self.init_driver()
                     time.sleep(5)
             
             time.sleep(3)
             
             # Step 2: Search for medication with connection safety
             def search_medication():
+                # Ensure we're on a valid page before searching
+                self.ensure_valid_page()
+                
+                # Close any modals before searching
+                self.close_modal_popups()
+                
                 search_box = self.wait.until(EC.presence_of_element_located((By.NAME, "searchterm")))
                 search_box.clear()
                 search_box.send_keys(medication)
@@ -125,58 +383,46 @@ class DrugsScraper:
             if not main_result:
                 return f"❌ Could not find main result for {medication}"
             
-            # Step 4: Click on main result with retry and connection safety
-            def click_main_result():
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", main_result)
-                time.sleep(1)
-                main_result.click()
-                return True
-            
+            # Step 4: Click on main result - simplified and faster
             try:
-                self.safe_driver_action(click_main_result)
+                # Close any modals before clicking
+                self.close_modal_popups()
+                
+                # Direct click first
+                main_result.click()
                 print(f"  ✅ Clicked main result for {medication}")
             except Exception as e:
-                # Try JavaScript click as fallback
+                # Quick JavaScript fallback
                 try:
-                    def js_click_main():
-                        self.driver.execute_script("arguments[0].click();", main_result)
-                        return True
-                    
-                    self.safe_driver_action(js_click_main)
+                    self.driver.execute_script("arguments[0].click();", main_result)
                     print(f"  ✅ Clicked main result (JS) for {medication}")
                 except Exception as e2:
                     return f"❌ Failed to click main result for {medication}: {str(e2)}"
             
-            time.sleep(4)
+            time.sleep(2)  # Reduced wait time
+            
+            # Close any modals that might have opened after clicking
+            self.close_modal_popups()
             
             # Step 5: Find and click side effects link
             side_effects_link = self.find_side_effects_link()
             if not side_effects_link:
                 return f"❌ Could not find side effects link for {medication}"
             
-            # Step 6: Click side effects link with connection safety
-            def click_side_effects():
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", side_effects_link)
-                time.sleep(1)
-                side_effects_link.click()
-                return True
-            
+            # Step 6: Click side effects link - simplified and faster
             try:
-                self.safe_driver_action(click_side_effects)
+                # Direct click first
+                side_effects_link.click()
                 print(f"  ✅ Clicked side effects link for {medication}")
             except Exception as e:
-                # Try JavaScript click as fallback
+                # Quick JavaScript fallback
                 try:
-                    def js_click_side_effects():
-                        self.driver.execute_script("arguments[0].click();", side_effects_link)
-                        return True
-                    
-                    self.safe_driver_action(js_click_side_effects)
+                    self.driver.execute_script("arguments[0].click();", side_effects_link)
                     print(f"  ✅ Clicked side effects link (JS) for {medication}")
                 except Exception as e2:
                     return f"❌ Failed to click side effects link for {medication}: {str(e2)}"
             
-            time.sleep(4)
+            time.sleep(2)  # Reduced wait time
             
             # Step 7: Extract side effects content
             content = self.extract_side_effects_content(medication)
@@ -203,8 +449,8 @@ class DrugsScraper:
         """Find the main medication result (usually with yellow star)"""
         print(f"  🔍 Looking for main result for: {medication}")
         
-        # Wait a bit longer for search results to load
-        time.sleep(5)
+        # Wait a bit for search results to load
+        time.sleep(3)  # Reduced from 5 seconds
         
         # Check connection before searching
         if not self.check_connection():
@@ -320,8 +566,8 @@ class DrugsScraper:
         """Find the side effects navigation link"""
         print(f"  🔍 Looking for side effects link...")
         
-        # Wait for page to fully load
-        time.sleep(3)
+        # Wait for page to load
+        time.sleep(2)  # Reduced from 3 seconds
         
         # Check connection before searching
         if not self.check_connection():
@@ -424,76 +670,140 @@ class DrugsScraper:
         return None
     
     def extract_side_effects_content(self, medication):
-        """Extract ONLY side effects content from the page"""
+        """Extract ONLY the core side effects content from the page"""
         try:
+            # Close any modals that might be blocking content
+            self.close_modal_popups()
+            
+            # Wait for page to load completely
+            time.sleep(2)
+            
             content_parts = []
             
-            # Try to find specific side effects sections first
-            selectors_to_try = [
+            # Try to find the main side effects section first
+            main_selectors = [
                 "#side-effects",
+                ".side-effects-content",
                 ".side-effects", 
                 "[id*='side-effects']",
-                "[class*='side-effects']"
+                "div[class*='side-effects']"
             ]
             
-            content_found = False
-            for selector in selectors_to_try:
+            # Look for the main side effects section
+            for selector in main_selectors:
                 try:
                     section = self.driver.find_element(By.CSS_SELECTOR, selector)
                     if section:
                         text = section.text.strip()
-                        if text and len(text) > 100:  # Ensure we have substantial side effects content
-                            content_parts.append(text)
-                            content_found = True
-                            break
+                        if text and len(text) > 50:  # Ensure substantial content
+                            # Clean the text to remove navigation/ads
+                            clean_text = self.clean_side_effects_text(text)
+                            if clean_text:
+                                return clean_text
                 except:
                     continue
             
-            # If no specific side effects section found, look for side effects text patterns
-            if not content_found:
-                # Look for headings containing "side effects"
-                try:
-                    headings = self.driver.find_elements(By.XPATH, "//h1[contains(text(), 'side effects')] | //h2[contains(text(), 'side effects')] | //h3[contains(text(), 'side effects')]")
-                    for heading in headings:
-                        # Get content after the heading
-                        content_parts.append(f"--- {heading.text} ---")
+            # If no main section found, look for side effects headings and following content
+            try:
+                # Look for side effects headings
+                headings = self.driver.find_elements(By.XPATH, 
+                    "//h1[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'side effect')] | "
+                    "//h2[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'side effect')] | "
+                    "//h3[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'side effect')]"
+                )
+                
+                for heading in headings:
+                    content_parts.append(f"=== {heading.text.strip()} ===")
+                    
+                    # Get the next few elements after the heading
+                    try:
+                        parent = heading.find_element(By.XPATH, "./..")
+                        following_elements = parent.find_elements(By.XPATH, f".//*[position() > {heading.find_elements(By.XPATH, './preceding-sibling::*').__len__() + 1}]")
                         
-                        # Find the next elements that contain side effects info
-                        next_element = heading.find_element(By.XPATH, "./following-sibling::*")
-                        while next_element and next_element.tag_name not in ['h1', 'h2', 'h3']:
-                            text = next_element.text.strip()
-                            if text:
-                                content_parts.append(text)
-                            try:
-                                next_element = next_element.find_element(By.XPATH, "./following-sibling::*")
-                            except:
-                                break
-                        content_found = True
+                        for elem in following_elements[:5]:  # Limit to first 5 elements
+                            elem_text = elem.text.strip()
+                            if elem_text and len(elem_text) > 20:
+                                content_parts.append(elem_text)
+                                if len(content_parts) >= 10:  # Limit total parts
+                                    break
                         break
-                except:
-                    pass
+                    except:
+                        continue
+                        
+            except:
+                pass
             
-            # If still no content, look for paragraphs containing side effects keywords
-            if not content_found:
+            # If still no content, look for paragraphs with side effects keywords
+            if not content_parts:
                 try:
                     paragraphs = self.driver.find_elements(By.TAG_NAME, "p")
                     for p in paragraphs:
-                        text = p.text.strip().lower()
-                        if any(keyword in text for keyword in ['side effect', 'adverse', 'reaction', 'emergency', 'call your doctor', 'serious']):
-                            content_parts.append(p.text.strip())
+                        text = p.text.strip()
+                        if any(keyword in text.lower() for keyword in [
+                            'side effect', 'adverse reaction', 'common side effects',
+                            'serious side effects', 'call your doctor', 'emergency'
+                        ]):
+                            content_parts.append(text)
+                            if len(content_parts) >= 5:  # Limit to 5 relevant paragraphs
+                                break
                 except:
                     pass
             
             if content_parts:
                 content = '\n\n'.join(content_parts)
-                # Clean up the content
-                content = self.clean_content(content)
-                return content
+                return self.clean_side_effects_text(content)
             else:
-                return f"No specific side effects content found for {medication}"
+                return f"No side effects content found for {medication}"
             
         except Exception as e:
-            return f"Error extracting side effects content: {str(e)}"
+            return f"Error extracting side effects: {str(e)}"
+    
+    def clean_side_effects_text(self, content):
+        """Clean side effects text to remove navigation, ads, and excess content"""
+        if not content:
+            return ""
+            
+        lines = content.split('\n')
+        cleaned_lines = []
+        
+        # Remove unwanted content
+        skip_keywords = [
+            'advertisement', 'ads by', 'sponsored', 'cookie', 'privacy',
+            'terms of use', 'about us', 'contact us', 'site map', 'navigation',
+            'menu', 'search', 'login', 'register', 'subscribe', 'newsletter',
+            'related articles', 'see also', 'references', 'further reading',
+            'drug interactions', 'dosage', 'how to take', 'storage'
+        ]
+        
+        for line in lines:
+            line = line.strip()
+            if line and len(line) > 3:  # Skip very short lines
+                # Skip lines with unwanted content
+                if not any(skip in line.lower() for skip in skip_keywords):
+                    # Keep lines that seem to be about side effects
+                    if any(keyword in line.lower() for keyword in [
+                        'side effect', 'adverse', 'reaction', 'symptom', 'common',
+                        'serious', 'severe', 'mild', 'call your doctor', 'emergency',
+                        'stop taking', 'discontinue', 'allergic', 'rash', 'fever',
+                        'nausea', 'vomiting', 'diarrhea', 'headache', 'dizziness'
+                    ]) or line.startswith('===') or line.startswith('---'):
+                        cleaned_lines.append(line)
+                    # Also keep short descriptive lines that might be side effects
+                    elif len(line) < 100 and not any(char in line for char in ['©', '®', '™']):
+                        cleaned_lines.append(line)
+        
+        # Join lines and clean up
+        content = '\n'.join(cleaned_lines)
+        
+        # Remove multiple consecutive newlines
+        while '\n\n\n' in content:
+            content = content.replace('\n\n\n', '\n\n')
+        
+        # Limit content length to avoid excessive data
+        if len(content) > 3000:
+            content = content[:3000] + "\n\n[Content truncated - showing first 3000 characters]"
+        
+        return content.strip()
     
     def clean_content(self, content):
         """Clean and format the side effects content"""
@@ -572,7 +882,7 @@ def update_excel_with_side_effects(max_medications=None):
         medications_ws.column_dimensions['G'].width = 100
     
     # Initialize scraper
-    scraper = DrugsScraper(headless=True)  # Use headless mode for faster processing
+    scraper = DrugsScraper(headless=False)  # Use visible mode to see what's happening
     
     try:
         processed_count = 0
@@ -604,12 +914,12 @@ def update_excel_with_side_effects(max_medications=None):
                     else:
                         content = f"❌ Failed to process {medication} after {max_retries} attempts"
             
-            # Add to Excel
+            # Add to Excel in column G
             row_num = 9 + i
-            medications_ws[f'H{row_num}'] = content
+            medications_ws[f'G{row_num}'] = content
             
             # Format cell
-            cell = medications_ws[f'H{row_num}']
+            cell = medications_ws[f'G{row_num}']
             cell.border = Border(
                 left=Side(style='thin'), right=Side(style='thin'),
                 top=Side(style='thin'), bottom=Side(style='thin')
