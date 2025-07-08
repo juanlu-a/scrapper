@@ -85,6 +85,9 @@ def create_main_diseases_analysis_v3():
     # Update summary sheet with actual results
     update_summary_sheet(summary_ws, created_sheets)
     
+    # Create the unique medications sheet
+    create_unique_medications_sheet(wb, df, target_diseases)
+    
     # Save the workbook
     output_path = '/Users/juanlu/Documents/Wye/scrapper/Analysis/main_diseases_analysis_final.xlsx'
     wb.save(output_path)
@@ -432,6 +435,146 @@ def split_text_into_chunks(text, chunk_size):
         chunks.append(current_chunk)
     
     return chunks
+
+def create_unique_medications_sheet(wb, df, target_diseases):
+    """
+    Create a sheet with all unique medications from main diseases, sorted alphabetically
+    Columns: Name, Side Effects, Call a Doctor If, Go to ER If, Dosage
+    """
+    
+    # Header styling
+    header_font = Font(bold=True, size=14, color="FFFFFF")
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    subheader_font = Font(bold=True, size=12, color="FFFFFF")
+    subheader_fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+    
+    # Border styling
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    
+    # Create the new sheet
+    medications_ws = wb.create_sheet(title="All Unique Medications")
+    
+    # Sheet title
+    medications_ws['A1'] = 'ALL UNIQUE MEDICATIONS FROM MAIN DISEASES'
+    medications_ws['A1'].font = header_font
+    medications_ws['A1'].fill = header_fill
+    medications_ws.merge_cells('A1:E1')
+    medications_ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    medications_ws.row_dimensions[1].height = 25
+    
+    # Information section
+    medications_ws['A3'] = 'INFORMATION'
+    medications_ws['A3'].font = subheader_font
+    medications_ws['A3'].fill = subheader_fill
+    medications_ws.merge_cells('A3:E3')
+    medications_ws['A3'].alignment = Alignment(horizontal='center')
+    
+    medications_ws['A4'] = 'Purpose:'
+    medications_ws['B4'] = 'Comprehensive list of all unique medications used across main diseases'
+    medications_ws['A5'] = 'Source:'
+    medications_ws['B5'] = 'final_diseases_complete.csv'
+    medications_ws['A6'] = 'Status:'
+    medications_ws['B6'] = 'Ready for FDA/Drugs.com data population'
+    
+    # Style the info cells
+    for row in [4, 5, 6]:
+        medications_ws[f'A{row}'].font = Font(bold=True)
+        medications_ws[f'A{row}'].fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    
+    # Extract all unique medications from target diseases
+    all_medications = set()
+    
+    for disease in target_diseases:
+        # Find matching rows for each disease
+        if disease == 'Heart disease':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Heart disease$', case=False, na=False, regex=True)]
+        elif disease == 'Obesity':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Obesity$', case=False, na=False, regex=True)]
+        elif disease == 'Stroke':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Stroke$', case=False, na=False, regex=True)]
+        else:
+            disease_data = df[df['Disease_Name_English'].str.contains(f'^{disease}$', case=False, na=False, regex=True)]
+        
+        if disease_data.empty:
+            # Try partial match if exact match fails
+            disease_data = df[df['Disease_Name_English'].str.contains(disease, case=False, na=False, regex=False)]
+            
+        if not disease_data.empty:
+            disease_row = disease_data.iloc[0]
+            medications = disease_row['Medications_Drugs'] if pd.notna(disease_row['Medications_Drugs']) else ''
+            
+            if medications:
+                # Split medications and add to set (to ensure uniqueness)
+                med_list = [med.strip() for med in medications.split(';') if med.strip()]
+                all_medications.update(med_list)
+    
+    # Sort medications alphabetically
+    sorted_medications = sorted(list(all_medications))
+    
+    # Create the table headers
+    header_row = 8
+    medications_ws[f'A{header_row}'] = 'MEDICATION NAME'
+    medications_ws[f'B{header_row}'] = 'SIDE EFFECTS'
+    medications_ws[f'C{header_row}'] = 'CALL A DOCTOR IF'
+    medications_ws[f'D{header_row}'] = 'GO TO ER IF'
+    medications_ws[f'E{header_row}'] = 'DOSAGE'
+    
+    # Style header row
+    for col in ['A', 'B', 'C', 'D', 'E']:
+        cell = medications_ws[f'{col}{header_row}']
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Add all unique medications (sorted alphabetically)
+    for i, medication in enumerate(sorted_medications):
+        row_num = header_row + 1 + i
+        
+        medications_ws[f'A{row_num}'] = medication
+        medications_ws[f'B{row_num}'] = ''  # To be filled with FDA/Drugs.com data
+        medications_ws[f'C{row_num}'] = ''  # To be filled with FDA/Drugs.com data
+        medications_ws[f'D{row_num}'] = ''  # To be filled with FDA/Drugs.com data
+        medications_ws[f'E{row_num}'] = ''  # To be filled with FDA/Drugs.com data
+        
+        # Add borders and formatting
+        for col in ['A', 'B', 'C', 'D', 'E']:
+            cell = medications_ws[f'{col}{row_num}']
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+        
+        # Alternate row colors for better readability
+        if i % 2 == 0:
+            for col in ['A', 'B', 'C', 'D', 'E']:
+                medications_ws[f'{col}{row_num}'].fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+    
+    # Add summary information
+    summary_row = header_row + len(sorted_medications) + 2
+    medications_ws[f'A{summary_row}'] = 'SUMMARY'
+    medications_ws[f'A{summary_row}'].font = Font(bold=True, size=12)
+    medications_ws[f'A{summary_row}'].fill = PatternFill(start_color="E2E6EA", end_color="E2E6EA", fill_type="solid")
+    
+    medications_ws[f'A{summary_row+1}'] = f'Total Unique Medications: {len(sorted_medications)}'
+    medications_ws[f'A{summary_row+1}'].font = Font(bold=True)
+    
+    medications_ws[f'A{summary_row+2}'] = f'Diseases Analyzed: {len(target_diseases)}'
+    medications_ws[f'A{summary_row+2}'].font = Font(bold=True)
+    
+    medications_ws[f'A{summary_row+3}'] = 'Next Steps: Populate columns B-E with FDA/Drugs.com data'
+    medications_ws[f'A{summary_row+3}'].font = Font(italic=True)
+    medications_ws.merge_cells(f'A{summary_row+3}:E{summary_row+3}')
+    
+    # Set column widths for better display
+    medications_ws.column_dimensions['A'].width = 30  # Medication Name
+    medications_ws.column_dimensions['B'].width = 40  # Side Effects
+    medications_ws.column_dimensions['C'].width = 35  # Call a Doctor If
+    medications_ws.column_dimensions['D'].width = 35  # Go to ER If
+    medications_ws.column_dimensions['E'].width = 25  # Dosage
+    
+    print(f"✓ Created 'All Unique Medications' sheet with {len(sorted_medications)} unique medications")
 
 if __name__ == "__main__":
     print("Creating Complete Main Diseases Analysis with ALL Medications...")
