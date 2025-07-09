@@ -7,7 +7,7 @@ from selenium.webdriver.common.keys import Keys
 import time
 import random
 from openpyxl import load_workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+# Removed all formatting imports to prevent Excel corruption
 import os
 
 class DrugsScraper:
@@ -968,19 +968,27 @@ def update_excel_with_side_effects(max_medications=None):
             print(f"   ... and {len(errors) - 10} more")
 
 if __name__ == "__main__":
-    print("🚀 Starting SLEEP-RESISTANT Drugs.com Side Effects Scraper")
+    print("🚀 Starting Enhanced LLM-Powered Side Effects Scraper")
     print("="*60)
     print("🔧 Enhanced features:")
+    print("   - Direct LLM processing of ALL side effects content")
+    print("   - Structured categorization into 3 columns:")
+    print("     * SIDE EFFECTS")
+    print("     * CALL A DOCTOR IF") 
+    print("     * GO TO ER IF")
     print("   - Automatic reconnection after computer sleep")
     print("   - Connection health monitoring")
     print("   - Robust error recovery")
     print("   - Multiple retry attempts")
-    print("   - Safe driver actions")
+    print("   - Modal/popup handling")
+    print("   - Resume from where it left off")
     print("="*60)
     
-    # Run FULL scraper for ALL medications
-    print("🚀 Running FULL scraper for ALL medications...")
-    update_excel_with_side_effects(max_medications=None)
+    # Run test with 1 medication first
+    print("🧪 Running TEST with 1 medication...")
+    update_excel_with_side_effects(max_medications=1)
     
     print("\n" + "="*60)
-    print("🎉 FULL SCRAPING COMPLETED!")
+    print("🎉 TEST COMPLETED! Check the Excel file to verify the results.")
+    print("💡 If the test looks good, remove the max_medications parameter")
+    print("   to process ALL medications.")
