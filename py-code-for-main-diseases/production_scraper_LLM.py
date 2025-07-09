@@ -103,64 +103,51 @@ class DrugsScraper:
             return False
     
     def close_modal_popups(self):
-        """Close any modal popups that might be blocking the page"""
+        """Close any modal popups that might be blocking the page with timeout protection"""
         try:
-            # List of selectors for common modal close buttons
-            close_selectors = [
+            # Quick and aggressive approach: send multiple escape keys
+            from selenium.webdriver.common.keys import Keys
+            body = self.driver.find_element(By.TAG_NAME, "body")
+            
+            # Send multiple escape keys to be extra sure
+            body.send_keys(Keys.ESCAPE)
+            time.sleep(0.1)
+            body.send_keys(Keys.ESCAPE)
+            time.sleep(0.1)
+            body.send_keys(Keys.ESCAPE)  # Third escape for persistent popups
+            print(f"  ✅ Sent multiple Escape keys to close modals")
+            time.sleep(0.3)  # Very short wait
+            
+            # Try to click any obvious close buttons quickly
+            quick_selectors = [
                 "button[aria-label*='close']",
-                "button[aria-label*='Close']",
-                "button[title*='close']",
-                "button[title*='Close']",
+                "button[aria-label*='Close']", 
                 ".close-button",
-                ".close-btn",
-                ".modal-close",
-                ".popup-close",
                 "button.close",
-                "[data-dismiss='modal']"
+                "[data-dismiss='modal']",
+                ".modal-close",
+                ".popup-close"
             ]
             
-            closed_modal = False
-            
-            for selector in close_selectors:
+            for selector in quick_selectors[:4]:  # Try first 4 selectors
                 try:
-                    close_buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    
-                    for button in close_buttons:
+                    buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for button in buttons[:1]:  # Only try first button
                         try:
-                            if button.is_displayed() and button.is_enabled():
+                            if button.is_displayed():
                                 button.click()
-                                print(f"  ✅ Closed modal using selector: {selector}")
-                                closed_modal = True
-                                time.sleep(1)
+                                print(f"  ✅ Closed modal with {selector}")
+                                time.sleep(0.2)
                                 break
                         except:
-                            try:
-                                self.driver.execute_script("arguments[0].click();", button)
-                                print(f"  ✅ Closed modal (JS) using selector: {selector}")
-                                closed_modal = True
-                                time.sleep(1)
-                                break
-                            except:
-                                continue
-                    
-                    if closed_modal:
+                            continue
+                    if buttons:  # If we found buttons, stop trying other selectors
                         break
-                        
-                except Exception as e:
-                    continue
-            
-            # Also try to press Escape key to close modals
-            if not closed_modal:
-                try:
-                    from selenium.webdriver.common.keys import Keys
-                    self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
-                    print("  ✅ Sent Escape key to close modal")
-                    time.sleep(1)
                 except:
-                    pass
-                
+                    continue
+                    
         except Exception as e:
-            print(f"  ⚠️  Error closing modals: {e}")
+            # Don't let modal closing errors stop the process
             pass
     
     def search_and_get_side_effects(self, medication):
@@ -187,6 +174,7 @@ class DrugsScraper:
             print(f"  ✅ Search submitted for: {medication}")
             
             # Step 3: Find main medication result
+            self.close_modal_popups()  # Close popups before searching
             main_result = self.find_main_medication_result(medication)
             if not main_result:
                 return f"❌ Could not find main result for {medication}"
@@ -208,28 +196,47 @@ class DrugsScraper:
                     return f"❌ Failed to click main result for {medication}: {str(e2)}"
             
             # Step 5: Find and click side effects link
+            self.close_modal_popups()  # Close popups before searching for side effects link
             side_effects_link = self.find_side_effects_link()
             if not side_effects_link:
                 return f"❌ Could not find side effects link for {medication}"
             
             # Step 6: Click side effects link
             try:
+                self.close_modal_popups()  # Close popups before clicking
                 side_effects_link.click()
                 print(f"  ✅ Clicked side effects link for {medication}")
-                time.sleep(2)
-                self.close_modal_popups()
+                time.sleep(1)
+                self.close_modal_popups()  # Close popups immediately after click
+                time.sleep(1)
+                self.close_modal_popups()  # Close popups again to be extra sure
             except Exception as e:
                 try:
                     self.driver.execute_script("arguments[0].click();", side_effects_link)
                     print(f"  ✅ Clicked side effects link (JS) for {medication}")
-                    time.sleep(2)
-                    self.close_modal_popups()
+                    time.sleep(1)
+                    self.close_modal_popups()  # Close popups immediately after JS click
+                    time.sleep(1)
+                    self.close_modal_popups()  # Close popups again to be extra sure
                 except Exception as e2:
                     return f"❌ Failed to click side effects link for {medication}: {str(e2)}"
             
-            # Step 7: Extract comprehensive side effects content
+            # Step 7: Extract comprehensive side effects content with timeout protection
             print(f"  📝 Extracting comprehensive side effects content...")
+            
+            # Aggressive popup closing after page load
+            self.close_modal_popups()  # First close
+            time.sleep(0.5)
+            self.close_modal_popups()  # Second close
+            time.sleep(0.5)  
+            self.close_modal_popups()  # Third close to be extra sure
+            
             comprehensive_content = self.extract_comprehensive_side_effects(medication)
+            
+            # Quick sanity check
+            if not comprehensive_content or len(comprehensive_content) < 50:
+                print(f"  ⚠️ Extraction returned minimal content, attempting quick recovery...")
+                comprehensive_content = self.extract_comprehensive_side_effects_quick(medication)
             
             # Step 8: Process with LLM to categorize information
             print(f"  🤖 Processing content with LLM...")
@@ -254,6 +261,9 @@ class DrugsScraper:
         print(f"  🔍 Looking for main result for: {medication}")
         time.sleep(3)
         
+        # Close popups before searching
+        self.close_modal_popups()
+        
         if not self.check_connection():
             print("  🔄 Reconnecting before searching for results...")
             self.init_driver()
@@ -269,6 +279,7 @@ class DrugsScraper:
         
         for selector in direct_selectors:
             try:
+                self.close_modal_popups()  # Close popups before each search attempt
                 results = self.driver.find_elements(By.CSS_SELECTOR, selector)
                 if results:
                     print(f"      ✅ Found direct match: {results[0].text[:50]}...")
@@ -278,6 +289,7 @@ class DrugsScraper:
         
         # Try text-based search
         try:
+            self.close_modal_popups()  # Close popups before text search
             all_links = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='.html']")
             medication_words = medication.lower().split()
             
@@ -316,6 +328,9 @@ class DrugsScraper:
         print(f"  🔍 Looking for side effects link...")
         time.sleep(2)
         
+        # Close popups before searching
+        self.close_modal_popups()
+        
         if not self.check_connection():
             print("  🔄 Reconnecting before searching for side effects link...")
             self.init_driver()
@@ -331,6 +346,7 @@ class DrugsScraper:
         
         for selector in xpath_selectors:
             try:
+                self.close_modal_popups()  # Close popups before each search attempt
                 links = self.driver.find_elements(By.XPATH, selector)
                 if links:
                     print(f"      ✅ Found side effects link: {links[0].text}")
@@ -347,6 +363,7 @@ class DrugsScraper:
         
         for selector in href_selectors:
             try:
+                self.close_modal_popups()  # Close popups before each search attempt
                 links = self.driver.find_elements(By.CSS_SELECTOR, selector)
                 if links:
                     print(f"      ✅ Found side effects link: {links[0].text}")
@@ -358,22 +375,35 @@ class DrugsScraper:
         return None
     
     def extract_comprehensive_side_effects(self, medication):
-        """Extract ALL side effects content comprehensively"""
+        """Extract ALL side effects content comprehensively with timeout protection"""
         try:
             print(f"    🔍 Starting comprehensive extraction for {medication}")
             
-            self.close_modal_popups()
-            time.sleep(3)
-            
+            # Quick connection check
             if not self.check_connection():
                 return f"❌ Connection lost during content extraction for {medication}"
             
+            # Close popups at start of extraction
+            self.close_modal_popups()
+            time.sleep(2)  # Reduced wait time
+            
             all_content = []
             
-            # Strategy 1: Get ALL text from the entire page and filter
+            # Strategy 1: Get ALL text from the entire page and filter (with timeout protection)
             try:
+                print(f"      📄 Strategy 1: Full page text extraction...")
+                self.close_modal_popups()  # Close popups before extraction
+                
                 body_element = self.driver.find_element(By.TAG_NAME, "body")
                 full_page_text = body_element.text
+                
+                # Quick check if we got content
+                if len(full_page_text) < 100:
+                    print(f"      ⚠️ Page text too short ({len(full_page_text)} chars), might be loading issue")
+                    self.close_modal_popups()  # Close popups before retry
+                    time.sleep(3)
+                    body_element = self.driver.find_element(By.TAG_NAME, "body")
+                    full_page_text = body_element.text
                 
                 paragraphs = full_page_text.split('\n')
                 relevant_content = []
@@ -390,7 +420,14 @@ class DrugsScraper:
                     'bleeding', 'bruising', 'infection', 'seizure'
                 ]
                 
-                for paragraph in paragraphs:
+                # Process paragraphs with limit to prevent hanging
+                for i, paragraph in enumerate(paragraphs[:500]):  # Limit processing
+                    if i % 50 == 0:  # Close popups every 50 paragraphs and check connection
+                        self.close_modal_popups()
+                        if not self.check_connection():
+                            print(f"      ⚠️ Connection lost during paragraph processing")
+                            break
+                            
                     paragraph = paragraph.strip()
                     if len(paragraph) > 20:
                         if any(keyword in paragraph.lower() for keyword in side_effects_keywords):
@@ -403,7 +440,10 @@ class DrugsScraper:
             except Exception as e:
                 print(f"      ⚠️ Error extracting from full page: {e}")
             
-            # Strategy 2: Look for specific sections
+            # Strategy 2: Look for specific sections and their content (with timeout protection)
+            print(f"      🎯 Strategy 2: Section-based extraction...")
+            self.close_modal_popups()  # Close popups before section extraction
+            
             section_selectors = [
                 "#side-effects",
                 ".side-effects",
@@ -415,15 +455,41 @@ class DrugsScraper:
                 "[class*='precaution']"
             ]
             
-            for selector in section_selectors:
+            for i, selector in enumerate(section_selectors):
                 try:
+                    # Close popups before each section search
+                    if i % 2 == 0:  # Every 2 selectors
+                        self.close_modal_popups()
+                        
+                    # Quick connection check
+                    if not self.check_connection():
+                        print(f"      ⚠️ Connection lost during section processing")
+                        break
+                        
                     sections = self.driver.find_elements(By.CSS_SELECTOR, selector)
                     for section in sections:
                         text = section.text.strip()
-                        if text and len(text) > 50:
+                        if text:
                             all_content.append(f"=== SECTION: {selector} ===")
                             all_content.append(text)
                             print(f"      ✅ Found section with {len(text)} characters: {selector}")
+                            
+                            # Special handling for #side-effects - get sibling content
+                            if selector == "#side-effects":
+                                try:
+                                    # Get following siblings that contain the actual side effects content
+                                    siblings = section.find_elements(By.XPATH, "./following-sibling::*")
+                                    print(f"      🔍 Found {len(siblings)} siblings after #side-effects")
+                                    
+                                    for i, sibling in enumerate(siblings[:5]):  # Get first 5 siblings
+                                        sibling_text = sibling.text.strip()
+                                        if len(sibling_text) > 20:
+                                            all_content.append(f"=== SIDE EFFECTS CONTENT {i+1} ===")
+                                            all_content.append(sibling_text)
+                                            print(f"      ✅ Added sibling {i+1} with {len(sibling_text)} characters")
+                                        
+                                except Exception as e:
+                                    print(f"      ⚠️ Error getting side effects siblings: {e}")
                 except:
                     continue
             
@@ -440,6 +506,39 @@ class DrugsScraper:
             print(f"    ❌ Exception during comprehensive extraction: {e}")
             return f"Error extracting side effects: {str(e)}"
     
+    def extract_comprehensive_side_effects_quick(self, medication):
+        """Quick fallback extraction method with minimal processing"""
+        try:
+            print(f"    🚀 Quick extraction fallback for {medication}")
+            
+            # Simple strategy: just get the side effects section content
+            try:
+                side_effects_elem = self.driver.find_element(By.CSS_SELECTOR, "#side-effects")
+                # Get parent element which likely contains the content
+                parent = side_effects_elem.find_element(By.XPATH, "..")
+                content = parent.text.strip()
+                
+                if len(content) > 100:
+                    print(f"    ✅ Quick extraction got {len(content)} characters")
+                    return content
+                    
+            except Exception as e:
+                print(f"    ⚠️ Quick extraction fallback failed: {e}")
+            
+            # Ultimate fallback: get visible text from body
+            try:
+                body = self.driver.find_element(By.TAG_NAME, "body")
+                text = body.text
+                if "side effect" in text.lower():
+                    return text[:5000]  # Limit to first 5000 characters
+            except:
+                pass
+                
+            return f"Quick extraction failed for {medication}"
+            
+        except Exception as e:
+            return f"Quick extraction error for {medication}: {str(e)}"
+
     def process_content_with_llm(self, medication, comprehensive_content):
         """Use LLM to categorize comprehensive content into structured columns"""
         try:
@@ -517,10 +616,14 @@ Important:
             current_section = None
             current_content = []
             
-            for line in sections:
+            for i, line in enumerate(sections):
                 line = line.strip()
                 
-                if line.upper().startswith('SIDE EFFECTS:'):
+                # Handle different formats: "SIDE EFFECTS:", "**SIDE EFFECTS:**", etc.
+                line_upper = line.upper().replace('*', '').replace(':', '').strip()
+                
+                # Make section detection more strict - must START with the section name
+                if line_upper == 'SIDE EFFECTS' or line_upper.startswith('SIDE EFFECTS'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
                         if current_section == 'side_effects':
@@ -532,12 +635,13 @@ Important:
                     
                     current_section = 'side_effects'
                     current_content = []
+                    # Add any content after the header
                     if ':' in line:
                         after_colon = line.split(':', 1)[1].strip()
-                        if after_colon:
+                        if after_colon and not after_colon.startswith('*'):
                             current_content.append(after_colon)
                             
-                elif line.upper().startswith('CALL A DOCTOR IF:') or line.upper().startswith('CALL DOCTOR IF:'):
+                elif line_upper.startswith('CALL A DOCTOR IF') or line_upper.startswith('CALL DOCTOR IF'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
                         if current_section == 'side_effects':
@@ -549,12 +653,13 @@ Important:
                     
                     current_section = 'call_doctor'
                     current_content = []
+                    # Add any content after the header
                     if ':' in line:
                         after_colon = line.split(':', 1)[1].strip()
-                        if after_colon:
+                        if after_colon and not after_colon.startswith('*'):
                             current_content.append(after_colon)
                             
-                elif line.upper().startswith('GO TO ER IF:') or line.upper().startswith('EMERGENCY:'):
+                elif line_upper.startswith('GO TO ER IF') or line_upper.startswith('EMERGENCY'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
                         if current_section == 'side_effects':
@@ -566,13 +671,16 @@ Important:
                     
                     current_section = 'go_to_er'
                     current_content = []
+                    # Add any content after the header
                     if ':' in line:
                         after_colon = line.split(':', 1)[1].strip()
-                        if after_colon:
+                        if after_colon and not after_colon.startswith('*'):
                             current_content.append(after_colon)
                             
                 elif line and current_section:
-                    current_content.append(line)
+                    # Collect content within the current section
+                    if line.strip() and line.strip() != '*':
+                        current_content.append(line)
             
             # Save the last section
             if current_section and current_content:
@@ -585,9 +693,9 @@ Important:
                     go_to_er = content
             
             return {
-                'side_effects': side_effects if side_effects else "No specific information provided",
-                'call_doctor': call_doctor if call_doctor else "No specific information provided",
-                'go_to_er': go_to_er if go_to_er else "No specific information provided"
+                'side_effects': side_effects if side_effects != "No specific information provided" else "No specific information provided",
+                'call_doctor': call_doctor if call_doctor != "No specific information provided" else "No specific information provided",
+                'go_to_er': go_to_er if go_to_er != "No specific information provided" else "No specific information provided"
             }
             
         except Exception as e:
@@ -698,6 +806,12 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
             medication_index = start_index + i
             print(f"\n[{medication_index + 1}/{len(medications)}] Processing: {medication}")
             
+            # Close popups at start of each medication processing
+            try:
+                scraper.close_modal_popups()
+            except:
+                pass
+            
             # Check if scraper connection is still alive
             if not scraper.check_connection():
                 print("  🔄 Reconnecting scraper...")
@@ -711,6 +825,13 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
             for attempt in range(max_retries):
                 try:
                     print(f"  🔄 Attempt {attempt + 1} of {max_retries}")
+                    
+                    # Close popups before each attempt
+                    try:
+                        scraper.close_modal_popups()
+                    except:
+                        pass
+                    
                     start_time = time.time()
                     
                     categorized_data = scraper.search_and_get_side_effects(medication)
@@ -725,6 +846,10 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
                     print(f"  ⚠️  Attempt {attempt + 1} failed: {e}")
                     if attempt < max_retries - 1:
                         print("  🔄 Reinitializing scraper and retrying...")
+                        try:
+                            scraper.close_modal_popups()
+                        except:
+                            pass
                         scraper.init_driver()
                         time.sleep(10)
                     else:
@@ -835,11 +960,11 @@ if __name__ == "__main__":
     print("   - Resume from where it left off")
     print("="*60)
     
-    # Run test with 1 medication first
-    print("🧪 Running TEST with 1 medication...")
-    update_excel_with_side_effects(max_medications=1)
+    # Run for 1 medication with DEBUG
+    print("🧪 Running DEBUG mode with 1 medication...")
+    update_excel_with_side_effects()  # Process ALL medications
     
     print("\n" + "="*60)
-    print("🎉 TEST COMPLETED! Check the Excel file to verify the results.")
+    print("🎉 DEBUG RUN COMPLETED! Check the output above for debug info.")
     print("💡 If the test looks good, remove the max_medications parameter")
     print("   to process ALL medications.")
