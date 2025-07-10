@@ -150,6 +150,181 @@ class DrugsScraper:
             # Don't let modal closing errors stop the process
             pass
     
+    def extract_what_is_info(self, medication):
+        """Extract 'What Is' information from the main medication page"""
+        try:
+            print(f"    📋 Extracting 'What Is' information for {medication}...")
+            
+            # Close any popups first
+            self.close_modal_popups()
+            
+            what_is_content = ""
+            
+            # Strategy 1: Look for "What is [drug_name]?" section specifically
+            try:
+                # Try to find headings that match "What is [drug_name]?"
+                headings_to_try = [
+                    f"What is {medication}?",
+                    f"What is {medication.lower()}?",
+                    f"What is {medication.capitalize()}?",
+                    "What is this medicine?",
+                    "What is this medication?",
+                    "What is this drug?"
+                ]
+                
+                for heading_text in headings_to_try:
+                    try:
+                        # Try XPath to find heading with specific text
+                        xpath = f"//h1[contains(text(), '{heading_text}')] | //h2[contains(text(), '{heading_text}')] | //h3[contains(text(), '{heading_text}')]"
+                        headings = self.driver.find_elements(By.XPATH, xpath)
+                        
+                        if headings:
+                            print(f"      ✅ Found 'What is' heading: {heading_text}")
+                            
+                            # Get the next sibling elements (paragraphs) after this heading
+                            heading = headings[0]
+                            following_elements = heading.find_elements(By.XPATH, "./following-sibling::p | ./following-sibling::div//p")
+                            
+                            for elem in following_elements[:3]:  # Get first 3 paragraphs
+                                text = elem.text.strip()
+                                if len(text) > 30:  # Only meaningful paragraphs
+                                    what_is_content += text + " "
+                                    
+                            if what_is_content:
+                                break
+                                
+                    except Exception:
+                        continue
+                        
+            except Exception as e:
+                print(f"      ⚠️ Error in strategy 1: {e}")
+            
+            # Strategy 2: Look for drug overview/description sections
+            if not what_is_content:
+                try:
+                    print(f"      🔍 Strategy 2: Looking for overview sections...")
+                    
+                    overview_selectors = [
+                        ".drug-overview",
+                        ".drug-description", 
+                        ".medication-overview",
+                        ".drug-summary",
+                        "[class*='overview']",
+                        "[class*='description']",
+                        "[class*='summary']",
+                        ".content-body p:first-of-type",
+                        ".drug-info p:first-of-type",
+                        "main p:first-of-type"
+                    ]
+                    
+                    for selector in overview_selectors:
+                        try:
+                            elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                            
+                            for element in elements[:2]:  # Only check first 2 elements
+                                text = element.text.strip()
+                                
+                                # Check if this looks like a drug description
+                                if (len(text) > 50 and 
+                                    any(keyword in text.lower() for keyword in [
+                                        'used to treat', 'used for', 'medication', 'drug', 'prescribed',
+                                        'belongs to', 'class of', 'works by', 'helps', 'treats',
+                                        medication.lower().split()[0] if medication else ''
+                                    ])):
+                                    
+                                    what_is_content += text + " "
+                                    print(f"      ✅ Found description from {selector}")
+                                    break
+                                    
+                            if what_is_content:
+                                break
+                                
+                        except Exception:
+                            continue
+                            
+                except Exception as e:
+                    print(f"      ⚠️ Error in strategy 2: {e}")
+            
+            # Strategy 3: Look for first meaningful paragraphs on the page
+            if not what_is_content:
+                try:
+                    print(f"      🔍 Strategy 3: Getting first meaningful paragraphs...")
+                    
+                    # Get all paragraphs and find the first ones that seem descriptive
+                    paragraphs = self.driver.find_elements(By.CSS_SELECTOR, "p")
+                    
+                    for paragraph in paragraphs[:10]:  # Check first 10 paragraphs
+                        try:
+                            text = paragraph.text.strip()
+                            
+                            # Skip navigation, footer, and other non-content paragraphs
+                            if (len(text) > 40 and 
+                                not any(skip_word in text.lower() for skip_word in [
+                                    'cookie', 'privacy', 'navigation', 'menu', 'search',
+                                    'copyright', 'terms', 'conditions', 'policy'
+                                ]) and
+                                any(drug_keyword in text.lower() for drug_keyword in [
+                                    'medication', 'drug', 'medicine', 'treatment', 'prescribed',
+                                    'used to', 'treats', 'helps', medication.lower().split()[0] if medication else ''
+                                ])):
+                                
+                                what_is_content += text + " "
+                                print(f"      ✅ Added paragraph: {text[:50]}...")
+                                
+                                # If we have enough content, stop
+                                if len(what_is_content) > 200:
+                                    break
+                                    
+                        except Exception:
+                            continue
+                            
+                except Exception as e:
+                    print(f"      ⚠️ Error in strategy 3: {e}")
+            
+            # Clean and format the content
+            if what_is_content:
+                # Remove extra whitespace and limit length
+                what_is_content = re.sub(r'\s+', ' ', what_is_content).strip()
+                
+                # Limit to a reasonable length for Excel
+                if len(what_is_content) > 500:
+                    # Try to cut at sentence boundary
+                    sentences = what_is_content.split('. ')
+                    truncated = ""
+                    for sentence in sentences:
+                        if len(truncated + sentence + '. ') <= 500:
+                            truncated += sentence + '. '
+                        else:
+                            break
+                    what_is_content = truncated.strip() if truncated else what_is_content[:500] + "..."
+                
+                print(f"    ✅ Extracted 'What Is' info: {len(what_is_content)} characters")
+                return what_is_content
+            
+            # Fallback: try to get any descriptive text from the page
+            try:
+                print(f"      🔍 Fallback: Looking for any descriptive content...")
+                body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                lines = body_text.split('\n')
+                
+                for line in lines[:30]:  # Check first 30 lines
+                    line = line.strip()
+                    if (len(line) > 50 and 
+                        any(keyword in line.lower() for keyword in [
+                            'used to treat', 'used for', 'medication', 'drug', 'prescribed'
+                        ])):
+                        return line[:500]
+                        
+            except Exception:
+                pass
+            
+            print(f"    ⚠️ Could not extract 'What Is' information for {medication}")
+            return f"Description not available for {medication}"
+            
+        except Exception as e:
+            print(f"    ❌ Error extracting 'What Is' info for {medication}: {e}")
+            return f"Error extracting description for {medication}"
+    
     def search_and_get_side_effects(self, medication):
         """Search for medication and get side effects content with LLM processing"""
         try:
@@ -194,6 +369,9 @@ class DrugsScraper:
                     self.close_modal_popups()
                 except Exception as e2:
                     return f"❌ Failed to click main result for {medication}: {str(e2)}"
+            
+            # Step 4.5: Extract "What Is" information from main page before going to side effects
+            what_is_info = self.extract_what_is_info(medication)
             
             # Step 5: Find and click side effects link
             self.close_modal_popups()  # Close popups before searching for side effects link
@@ -240,7 +418,7 @@ class DrugsScraper:
             
             # Step 8: Process with LLM to categorize information
             print(f"  🤖 Processing content with LLM...")
-            categorized_data = self.process_content_with_llm(medication, comprehensive_content)
+            categorized_data = self.process_content_with_llm(medication, comprehensive_content, what_is_info)
             
             print(f"  ✅ Successfully processed {medication}")
             return categorized_data
@@ -539,13 +717,14 @@ class DrugsScraper:
         except Exception as e:
             return f"Quick extraction error for {medication}: {str(e)}"
 
-    def process_content_with_llm(self, medication, comprehensive_content):
-        """Use LLM to categorize comprehensive content into structured columns"""
+    def process_content_with_llm(self, medication, comprehensive_content, what_is_info):
+        """Use LLM to categorize comprehensive content into structured columns including What Is information"""
         try:
             print(f"    🤖 Processing content with LLM for {medication}...")
             
             if not comprehensive_content or comprehensive_content.startswith("❌") or comprehensive_content.startswith("No side effects"):
                 return {
+                    'what_is': what_is_info if what_is_info else f"No description available for {medication}",
                     'side_effects': f"No side effects information found for {medication}",
                     'call_doctor': f"No doctor guidance found for {medication}",
                     'go_to_er': f"No emergency guidance found for {medication}"
@@ -553,20 +732,28 @@ class DrugsScraper:
             
             # Create a comprehensive prompt for the LLM
             prompt = f"""
-You are a medical information expert. Please analyze the following side effects information for the medication "{medication}" and categorize it into three specific columns:
+You are a medical information expert. Please analyze the following information for the medication "{medication}" and categorize it into four specific columns:
+
+WHAT IS INFORMATION:
+{what_is_info}
 
 RAW SIDE EFFECTS TEXT:
 {comprehensive_content}
 
-Please extract and organize this information into exactly three categories:
+Please extract and organize this information into exactly four categories:
 
-1. SIDE EFFECTS: List all the side effects mentioned (common, uncommon, serious, mild, etc.). Include symptoms, reactions, and any physical or mental effects.
+1. WHAT IS: Provide a clear, concise description of what this medication is and what it's used for. Use the "What Is Information" provided above, but feel free to refine and improve it for clarity.
 
-2. CALL A DOCTOR IF: Extract information about when patients should contact their doctor. This includes warnings, concerning symptoms, or situations requiring medical consultation.
+2. SIDE EFFECTS: List all the side effects mentioned (common, uncommon, serious, mild, etc.). Include symptoms, reactions, and any physical or mental effects.
 
-3. GO TO ER IF: Extract emergency situations, severe reactions, or life-threatening symptoms that require immediate emergency medical attention.
+3. CALL A DOCTOR IF: Extract information about when patients should contact their doctor. This includes warnings, concerning symptoms, or situations requiring medical consultation.
+
+4. GO TO ER IF: Extract emergency situations, severe reactions, or life-threatening symptoms that require immediate emergency medical attention.
 
 Format your response as:
+
+WHAT IS:
+[Clear description of the medication and its uses]
 
 SIDE EFFECTS:
 [List all side effects here]
@@ -598,15 +785,17 @@ Important:
         except Exception as e:
             print(f"    ❌ Error processing with LLM: {e}")
             return {
+                'what_is': what_is_info if what_is_info else f"Error getting description for {medication}: {str(e)}",
                 'side_effects': f"Error processing side effects for {medication}: {str(e)}",
                 'call_doctor': f"Error processing doctor guidance for {medication}: {str(e)}",
                 'go_to_er': f"Error processing emergency guidance for {medication}: {str(e)}"
             }
     
     def parse_llm_response(self, llm_response):
-        """Parse the LLM response into structured categories"""
+        """Parse the LLM response into structured categories including What Is"""
         try:
             # Initialize default values
+            what_is = "No specific information provided"
             side_effects = "No specific information provided"
             call_doctor = "No specific information provided"
             go_to_er = "No specific information provided"
@@ -619,14 +808,36 @@ Important:
             for i, line in enumerate(sections):
                 line = line.strip()
                 
-                # Handle different formats: "SIDE EFFECTS:", "**SIDE EFFECTS:**", etc.
+                # Handle different formats: "WHAT IS:", "**WHAT IS:**", etc.
                 line_upper = line.upper().replace('*', '').replace(':', '').strip()
                 
                 # Make section detection more strict - must START with the section name
-                if line_upper == 'SIDE EFFECTS' or line_upper.startswith('SIDE EFFECTS'):
+                if line_upper == 'WHAT IS' or line_upper.startswith('WHAT IS'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
-                        if current_section == 'side_effects':
+                        if current_section == 'what_is':
+                            what_is = content
+                        elif current_section == 'side_effects':
+                            side_effects = content
+                        elif current_section == 'call_doctor':
+                            call_doctor = content
+                        elif current_section == 'go_to_er':
+                            go_to_er = content
+                    
+                    current_section = 'what_is'
+                    current_content = []
+                    # Add any content after the header
+                    if ':' in line:
+                        after_colon = line.split(':', 1)[1].strip()
+                        if after_colon and not after_colon.startswith('*'):
+                            current_content.append(after_colon)
+                            
+                elif line_upper == 'SIDE EFFECTS' or line_upper.startswith('SIDE EFFECTS'):
+                    if current_section and current_content:
+                        content = '\n'.join(current_content).strip()
+                        if current_section == 'what_is':
+                            what_is = content
+                        elif current_section == 'side_effects':
                             side_effects = content
                         elif current_section == 'call_doctor':
                             call_doctor = content
@@ -644,7 +855,9 @@ Important:
                 elif line_upper.startswith('CALL A DOCTOR IF') or line_upper.startswith('CALL DOCTOR IF'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
-                        if current_section == 'side_effects':
+                        if current_section == 'what_is':
+                            what_is = content
+                        elif current_section == 'side_effects':
                             side_effects = content
                         elif current_section == 'call_doctor':
                             call_doctor = content
@@ -662,7 +875,9 @@ Important:
                 elif line_upper.startswith('GO TO ER IF') or line_upper.startswith('EMERGENCY'):
                     if current_section and current_content:
                         content = '\n'.join(current_content).strip()
-                        if current_section == 'side_effects':
+                        if current_section == 'what_is':
+                            what_is = content
+                        elif current_section == 'side_effects':
                             side_effects = content
                         elif current_section == 'call_doctor':
                             call_doctor = content
@@ -685,7 +900,9 @@ Important:
             # Save the last section
             if current_section and current_content:
                 content = '\n'.join(current_content).strip()
-                if current_section == 'side_effects':
+                if current_section == 'what_is':
+                    what_is = content
+                elif current_section == 'side_effects':
                     side_effects = content
                 elif current_section == 'call_doctor':
                     call_doctor = content
@@ -693,6 +910,7 @@ Important:
                     go_to_er = content
             
             return {
+                'what_is': what_is if what_is != "No specific information provided" else "No specific information provided",
                 'side_effects': side_effects if side_effects != "No specific information provided" else "No specific information provided",
                 'call_doctor': call_doctor if call_doctor != "No specific information provided" else "No specific information provided",
                 'go_to_er': go_to_er if go_to_er != "No specific information provided" else "No specific information provided"
@@ -701,6 +919,7 @@ Important:
         except Exception as e:
             print(f"    ❌ Error parsing LLM response: {e}")
             return {
+                'what_is': f"Error parsing response: {str(e)}",
                 'side_effects': f"Error parsing response: {str(e)}",
                 'call_doctor': f"Error parsing response: {str(e)}",
                 'go_to_er': f"Error parsing response: {str(e)}"
@@ -791,9 +1010,10 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
     print(f"📊 Processing {len(remaining_medications)} remaining medications (starting from #{start_index + 1})...")
     
     # Update column headers for the new structure
-    medications_ws['B8'] = 'SIDE EFFECTS'
-    medications_ws['C8'] = 'CALL A DOCTOR IF'
-    medications_ws['D8'] = 'GO TO ER IF'
+    medications_ws['B8'] = 'WHAT IS'
+    medications_ws['C8'] = 'SIDE EFFECTS'
+    medications_ws['D8'] = 'CALL A DOCTOR IF'
+    medications_ws['E8'] = 'GO TO ER IF'
     
     # Initialize scraper
     scraper = DrugsScraper(headless=False)
@@ -865,15 +1085,18 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
             try:
                 if isinstance(categorized_data, dict):
                     # LLM processing succeeded - save structured data
+                    what_is = sanitize_text_for_excel(categorized_data.get('what_is', ''))
                     side_effects = sanitize_text_for_excel(categorized_data.get('side_effects', ''))
                     call_doctor = sanitize_text_for_excel(categorized_data.get('call_doctor', ''))
                     go_to_er = sanitize_text_for_excel(categorized_data.get('go_to_er', ''))
                     
-                    medications_ws[f'B{row_num}'] = side_effects
-                    medications_ws[f'C{row_num}'] = call_doctor
-                    medications_ws[f'D{row_num}'] = go_to_er
+                    medications_ws[f'B{row_num}'] = what_is
+                    medications_ws[f'C{row_num}'] = side_effects
+                    medications_ws[f'D{row_num}'] = call_doctor
+                    medications_ws[f'E{row_num}'] = go_to_er
                     
                     print(f"  ✅ Saved structured data for {medication}")
+                    print(f"    - What Is: {len(what_is)} chars")
                     print(f"    - Side Effects: {len(side_effects)} chars")
                     print(f"    - Call Doctor: {len(call_doctor)} chars")
                     print(f"    - Go to ER: {len(go_to_er)} chars")
@@ -885,6 +1108,7 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
                     medications_ws[f'B{row_num}'] = error_msg
                     medications_ws[f'C{row_num}'] = "Processing failed"
                     medications_ws[f'D{row_num}'] = "Processing failed"
+                    medications_ws[f'E{row_num}'] = "Processing failed"
                     
                     print(f"  ❌ Saved error data for {medication}")
                     
@@ -895,6 +1119,7 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
                     medications_ws[f'B{row_num}'] = error_msg
                     medications_ws[f'C{row_num}'] = error_msg
                     medications_ws[f'D{row_num}'] = error_msg
+                    medications_ws[f'E{row_num}'] = error_msg
                 except Exception as fallback_error:
                     print(f"  ❌ Fatal Excel write error: {fallback_error}")
                     continue
@@ -944,11 +1169,12 @@ def update_excel_with_side_effects(max_medications=None, start_from=0):
             print(f"   ... and {len(errors) - 10} more")
 
 if __name__ == "__main__":
-    print("🚀 Starting Enhanced LLM-Powered Side Effects Scraper")
+    print("🚀 Starting Enhanced LLM-Powered Medication Data Scraper")
     print("="*60)
     print("🔧 Enhanced features:")
-    print("   - Direct LLM processing of ALL side effects content")
-    print("   - Structured categorization into 3 columns:")
+    print("   - Direct LLM processing of medication information and side effects")
+    print("   - Structured categorization into 4 columns:")
+    print("     * WHAT IS (medication description)")
     print("     * SIDE EFFECTS")
     print("     * CALL A DOCTOR IF") 
     print("     * GO TO ER IF")
