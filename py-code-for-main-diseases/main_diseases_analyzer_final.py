@@ -439,7 +439,7 @@ def split_text_into_chunks(text, chunk_size):
 def create_unique_medications_sheet(wb, df, target_diseases):
     """
     Create a sheet with all unique medications from main diseases, sorted alphabetically
-    Columns: Name, Side Effects, Call a Doctor If, Go to ER If, Dosage
+    Columns: Name, What Is, Side Effects, Call a Doctor If, Go to ER If
     """
     
     # Header styling
@@ -517,10 +517,10 @@ def create_unique_medications_sheet(wb, df, target_diseases):
     # Create the table headers
     header_row = 8
     medications_ws[f'A{header_row}'] = 'MEDICATION NAME'
-    medications_ws[f'B{header_row}'] = 'SIDE EFFECTS'
-    medications_ws[f'C{header_row}'] = 'CALL A DOCTOR IF'
-    medications_ws[f'D{header_row}'] = 'GO TO ER IF'
-    medications_ws[f'E{header_row}'] = 'DOSAGE'
+    medications_ws[f'B{header_row}'] = 'WHAT IS'
+    medications_ws[f'C{header_row}'] = 'SIDE EFFECTS'
+    medications_ws[f'D{header_row}'] = 'CALL A DOCTOR IF'
+    medications_ws[f'E{header_row}'] = 'GO TO ER IF'
     
     # Style header row
     for col in ['A', 'B', 'C', 'D', 'E']:
@@ -535,10 +535,10 @@ def create_unique_medications_sheet(wb, df, target_diseases):
         row_num = header_row + 1 + i
         
         medications_ws[f'A{row_num}'] = medication
-        medications_ws[f'B{row_num}'] = ''  # To be filled with FDA/Drugs.com data
-        medications_ws[f'C{row_num}'] = ''  # To be filled with FDA/Drugs.com data
-        medications_ws[f'D{row_num}'] = ''  # To be filled with FDA/Drugs.com data
-        medications_ws[f'E{row_num}'] = ''  # To be filled with FDA/Drugs.com data
+        medications_ws[f'B{row_num}'] = ''  # To be filled with "What Is" data
+        medications_ws[f'C{row_num}'] = ''  # To be filled with "Side Effects" data
+        medications_ws[f'D{row_num}'] = ''  # To be filled with "Call a Doctor If" data
+        medications_ws[f'E{row_num}'] = ''  # To be filled with "Go to ER If" data
         
         # Add borders and formatting
         for col in ['A', 'B', 'C', 'D', 'E']:
@@ -563,16 +563,16 @@ def create_unique_medications_sheet(wb, df, target_diseases):
     medications_ws[f'A{summary_row+2}'] = f'Diseases Analyzed: {len(target_diseases)}'
     medications_ws[f'A{summary_row+2}'].font = Font(bold=True)
     
-    medications_ws[f'A{summary_row+3}'] = 'Next Steps: Populate columns B-E with FDA/Drugs.com data'
+    medications_ws[f'A{summary_row+3}'] = 'Next Steps: Populate columns B-E with medication data (What Is, Side Effects, Call Doctor, Go to ER)'
     medications_ws[f'A{summary_row+3}'].font = Font(italic=True)
     medications_ws.merge_cells(f'A{summary_row+3}:E{summary_row+3}')
     
     # Set column widths for better display
     medications_ws.column_dimensions['A'].width = 30  # Medication Name
-    medications_ws.column_dimensions['B'].width = 40  # Side Effects
-    medications_ws.column_dimensions['C'].width = 35  # Call a Doctor If
-    medications_ws.column_dimensions['D'].width = 35  # Go to ER If
-    medications_ws.column_dimensions['E'].width = 25  # Dosage
+    medications_ws.column_dimensions['B'].width = 45  # What Is
+    medications_ws.column_dimensions['C'].width = 40  # Side Effects
+    medications_ws.column_dimensions['D'].width = 35  # Call a Doctor If
+    medications_ws.column_dimensions['E'].width = 35  # Go to ER If
     
     print(f"✓ Created 'All Unique Medications' sheet with {len(sorted_medications)} unique medications")
 
