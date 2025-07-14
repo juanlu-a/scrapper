@@ -11,6 +11,10 @@ from openpyxl import load_workbook
 import os
 import shutil
 import google.generativeai as genai
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv('/Users/juanlu/Documents/Wye/scrapper/.env')
 
 class DrugsScraper:
     def __init__(self, headless=False):
@@ -19,7 +23,11 @@ class DrugsScraper:
         self.wait = None
         
         # Configure Google Generative AI
-        genai.configure(api_key="AIzaSyDDZg49dNLbx7qxGC1aRcpcfLh2jbfXPFM")
+        api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+        if not api_key:
+            raise ValueError("GOOGLE_GEMINI_API_KEY not found in environment variables. Please check your .env file.")
+        
+        genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel("gemini-1.5-flash")
         
         self.init_driver()

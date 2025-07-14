@@ -1,0 +1,38 @@
+# Environment variables (SECURITY: Never commit API keys!)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# CSV Files
+CSV/diagnosis_treatment_data_full.csv
+CSV/diseases_diagnosis_treatment.csv
+CSV/diseases_all_letters.csv
+CSV/normalized_medical_data.csv
+CSV/drugs_information_full.csv
+CSV/drugs_all_letters.csv
+CSV/diagnosis_treatment_data_final.csv
+CSV/diseases_with_diagnosis_urls_b.csv
+CSV/diseases_with_diagnosis_urls.csv
+
+# Analysis Files
+Analysis/drug_data_analysis.xlsx
+Analysis/medical_data_analysis.xlsx
+
+# OS Files
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Excel temporary files
+~$*.xlsx
+~$*.xls
