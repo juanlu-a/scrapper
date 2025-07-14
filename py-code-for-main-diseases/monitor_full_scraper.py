@@ -67,7 +67,7 @@ def monitor_progress():
         
         # Estimate time remaining
         if processed_medications > 0:
-            avg_time_per_med = 6  # seconds (4 second delay + 2 seconds processing)
+            avg_time_per_med = 6 
             remaining = total_medications - processed_medications
             eta_minutes = (remaining * avg_time_per_med) / 60
             print(f"\n⏱️  Estimated time remaining: {eta_minutes:.1f} minutes")
