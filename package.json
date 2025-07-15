@@ -12,10 +12,12 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.10.0",
     "cheerio": "^1.1.0",
     "csv-parser": "^3.2.0",
     "csv-writer": "^1.6.0",
+    "dotenv": "^17.2.0",
     "exceljs": "^4.4.0",
     "translate-google-api": "^1.0.4"
   },
