@@ -4,6 +4,130 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils.dataframe import dataframe_to_rows
 import os
+import time
+import re
+from dotenv import load_dotenv
+import google.generativeai as genai
+from google.generativeai import GenerativeModel
+
+# Load environment variables
+load_dotenv('../.env')
+
+# Initialize LLM
+api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
+if api_key:
+    genai.configure(api_key=api_key)
+    model = GenerativeModel('gemini-1.5-flash')
+else:
+    model = None
+    print("⚠️ GOOGLE_GEMINI_API_KEY not found - medications will not be enhanced")
+
+def enhance_medications_with_llm(medications_text, disease_name):
+    """Enhance existing medications with LLM to add simple drug names only"""
+    
+    if not model:
+        return medications_text  # Return original if no LLM available
+    
+    try:
+        # Parse existing medications and clean them
+        existing_meds = [med.strip() for med in medications_text.split(';') if med.strip()] if medications_text else []
+        
+        # Clean existing medications (remove formatting, parentheses, etc.)
+        cleaned_existing = []
+        for med in existing_meds:
+            # Remove **bold** formatting
+            clean_med = re.sub(r'\*\*([^*]+)\*\*', r'\1', med)
+            # Remove parentheses and content inside
+            clean_med = re.sub(r'\s*\([^)]*\)', '', clean_med)
+            # Remove extra whitespace
+            clean_med = re.sub(r'\s+', ' ', clean_med).strip()
+            if clean_med:
+                cleaned_existing.append(clean_med)
+        
+        print(f"   🤖 Enhancing {len(cleaned_existing)} existing medications for {disease_name}")
+        
+        prompt = f"""
+You are a pharmaceutical expert. I need SIMPLE drug names only for "{disease_name}".
+
+EXISTING MEDICATIONS (cleaned):
+{'; '.join(cleaned_existing) if cleaned_existing else 'None listed'}
+
+Please provide a comprehensive list of medications for {disease_name} with these requirements:
+
+STRICT REQUIREMENTS:
+1. Keep ALL existing medications (don't remove any)
+2. Add 15-25 additional relevant medications
+3. SIMPLE DRUG NAMES ONLY - no brand names, no parentheses, no extra information
+4. Generic names preferred (like "metformin" not "Metformin (Glucophage)")
+5. No formatting like **bold** or (parentheses)
+6. One word or simple compound names when possible
+7. Only real, approved medications for {disease_name}
+
+EXAMPLES OF GOOD NAMES:
+- aspirin
+- metformin  
+- lisinopril
+- atorvastatin
+- amoxicillin
+
+EXAMPLES OF BAD NAMES:
+- Aspirin (Bayer)
+- **Metformin** (Glucophage)
+- Lisinopril (brand name Prinivil)
+- Atorvastatin 20mg tablets
+
+Format as semicolon-separated list with simple drug names only.
+
+SIMPLE DRUG NAMES LIST:
+"""
+
+        result = model.generate_content(prompt)
+        response = result.text.strip()
+        
+        # Extract medications from response
+        if ":" in response:
+            response = response.split(":", 1)[1].strip()
+        
+        # Clean and split
+        enhanced_medications = [med.strip() for med in response.split(';') if med.strip()]
+        
+        # Further cleaning to ensure simple names only
+        final_medications = []
+        for med in enhanced_medications:
+            # Remove any remaining formatting
+            clean_med = re.sub(r'\*\*([^*]+)\*\*', r'\1', med)  # Remove **bold**
+            clean_med = re.sub(r'\s*\([^)]*\)', '', clean_med)  # Remove parentheses
+            clean_med = re.sub(r'\s*\[[^\]]*\]', '', clean_med)  # Remove brackets
+            clean_med = re.sub(r'\s+', ' ', clean_med).strip()  # Clean whitespace
+            
+            # Only keep if it's a simple drug name
+            if (clean_med and 
+                len(clean_med) > 2 and 
+                not clean_med.lower().startswith(('note:', 'simple:', 'medications:', 'drugs:', 'list:')) and
+                not clean_med.lower().endswith(('list', 'medications', 'drugs', 'therapy', 'treatment', 'mg', 'tablets')) and
+                clean_med.lower() not in ['etc', 'others', 'various', 'and', 'or'] and
+                not any(word in clean_med.lower() for word in ['brand', 'generic', 'also known', 'trade name'])):
+                final_medications.append(clean_med)
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_medications = []
+        for med in final_medications:
+            if med.lower() not in seen:
+                seen.add(med.lower())
+                unique_medications.append(med)
+        
+        enhanced_text = '; '.join(unique_medications)
+        print(f"   ✅ Enhanced from {len(cleaned_existing)} to {len(unique_medications)} simple drug names")
+        
+        # Add delay to be respectful to API
+        time.sleep(1.5)
+        
+        return enhanced_text
+        
+    except Exception as e:
+        print(f"   ❌ LLM enhancement failed for {disease_name}: {e}")
+        return medications_text  # Return original on error
 
 def create_main_diseases_analysis_v3():
     """
@@ -26,7 +150,7 @@ def create_main_diseases_analysis_v3():
     ]
     
     # Read the CSV file
-    csv_path = '/Users/juanlu/Documents/Wye/scrapper/CSV/final_diseases_complete.csv'
+    csv_path = '../CSV/final_diseases_complete.csv'
     df = pd.read_csv(csv_path)
     
     # Create workbook
@@ -73,21 +197,29 @@ def create_main_diseases_analysis_v3():
         sheet_name = disease_name.replace('(', '').replace(')', '').replace('/', '-')[:31]
         ws = wb.create_sheet(title=sheet_name)
         
-        # Set up the sheet structure with simplified medication list
-        setup_disease_sheet_v3(ws, disease_row, disease_name)
+        # Enhance medications with LLM
+        original_medications = disease_row['Medications_Drugs'] if pd.notna(disease_row['Medications_Drugs']) else ''
+        enhanced_medications = enhance_medications_with_llm(original_medications, disease_name)
+        
+        # Update the disease row with enhanced medications for sheet creation
+        disease_row_enhanced = disease_row.copy()
+        disease_row_enhanced['Medications_Drugs'] = enhanced_medications
+        
+        # Set up the sheet structure with enhanced medication list
+        setup_disease_sheet_v3(ws, disease_row_enhanced, disease_name)
         created_sheets.append((disease, disease_name))
-        print(f"✓ Created sheet for: {disease_name}")
+        print(f"✓ Created enhanced sheet for: {disease_name}")
     
     # Update summary sheet with actual results
     update_summary_sheet(summary_ws, created_sheets)
     
-    # Create the unique medications sheet
-    create_unique_medications_sheet(wb, df, target_diseases)
+    # Create the unique medications sheet with enhanced medications
+    create_unique_medications_sheet_enhanced(wb, df, target_diseases)
     
     # Save the workbook
-    output_path = '/Users/juanlu/Documents/Wye/scrapper/Analysis/main_diseases_analysis_final.xlsx'
+    output_path = '../Analysis/main_diseases_analysis_final.xlsx'
     wb.save(output_path)
-    print(f"\nAnalysis saved to: {output_path}")
+    print(f"\nEnhanced analysis saved to: {output_path}")
     
     return output_path
 
@@ -151,7 +283,7 @@ def update_summary_sheet(ws, created_sheets):
     created_mapping = {original: matched for original, matched in created_sheets}
     
     # Read CSV to get Spanish names
-    csv_path = '/Users/juanlu/Documents/Wye/scrapper/CSV/final_diseases_complete.csv'
+    csv_path = '../CSV/final_diseases_complete.csv'
     df = pd.read_csv(csv_path)
     
     # Update the status for each disease
@@ -347,6 +479,166 @@ def setup_disease_sheet_v3(ws, disease_row, disease_name):
     ws.column_dimensions['E'].width = 15
     ws.column_dimensions['F'].width = 15
 
+def create_unique_medications_sheet_enhanced(wb, df, target_diseases):
+    """
+    Create enhanced sheet with all unique medications from main diseases, with LLM enhancements
+    """
+    
+    # Header styling
+    header_font = Font(bold=True, size=14, color="FFFFFF")
+    header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
+    subheader_font = Font(bold=True, size=12, color="FFFFFF")
+    subheader_fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+    
+    # Border styling
+    thin_border = Border(
+        left=Side(style='thin'), right=Side(style='thin'),
+        top=Side(style='thin'), bottom=Side(style='thin')
+    )
+    
+    # Create the new sheet
+    medications_ws = wb.create_sheet(title="All Unique Medications")
+    
+    # Sheet title
+    medications_ws['A1'] = 'ALL UNIQUE MEDICATIONS - SIMPLE DRUG NAMES (KISS)'
+    medications_ws['A1'].font = header_font
+    medications_ws['A1'].fill = header_fill
+    medications_ws.merge_cells('A1:F1')
+    medications_ws['A1'].alignment = Alignment(horizontal='center', vertical='center')
+    medications_ws.row_dimensions[1].height = 25
+    
+    # Information section
+    medications_ws['A3'] = 'INFORMATION'
+    medications_ws['A3'].font = subheader_font
+    medications_ws['A3'].fill = subheader_fill
+    medications_ws.merge_cells('A3:F3')
+    medications_ws['A3'].alignment = Alignment(horizontal='center')
+    
+    medications_ws['A4'] = 'Purpose:'
+    medications_ws['B4'] = 'Simple drug names (ready for production_scraper_LLM.py)'
+    medications_ws['A5'] = 'Source:'
+    medications_ws['B5'] = 'final_diseases_complete.csv + AI Enhancement'
+    medications_ws['A6'] = 'Enhancement:'
+    medications_ws['B6'] = 'LLM-powered simple drug names (no commercial names, no formatting)'
+    
+    # Style the info cells
+    for row in [4, 5, 6]:
+        medications_ws[f'A{row}'].font = Font(bold=True)
+        medications_ws[f'A{row}'].fill = PatternFill(start_color="F2F2F2", end_color="F2F2F2", fill_type="solid")
+    
+    # Extract all unique medications from target diseases with LLM enhancement
+    all_medications = set()
+    medication_to_diseases = {}
+    
+    for disease in target_diseases:
+        # Find matching rows for each disease
+        if disease == 'Heart disease':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Heart disease$', case=False, na=False, regex=True)]
+        elif disease == 'Obesity':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Obesity$', case=False, na=False, regex=True)]
+        elif disease == 'Stroke':
+            disease_data = df[df['Disease_Name_English'].str.contains('^Stroke$', case=False, na=False, regex=True)]
+        else:
+            disease_data = df[df['Disease_Name_English'].str.contains(f'^{disease}$', case=False, na=False, regex=True)]
+        
+        if disease_data.empty:
+            # Try partial match if exact match fails
+            disease_data = df[df['Disease_Name_English'].str.contains(disease, case=False, na=False, regex=False)]
+            
+        if not disease_data.empty:
+            disease_row = disease_data.iloc[0]
+            disease_name = disease_row['Disease_Name_English']
+            original_medications = disease_row['Medications_Drugs'] if pd.notna(disease_row['Medications_Drugs']) else ''
+            
+            # Get enhanced medications for this disease
+            enhanced_medications = enhance_medications_with_llm(original_medications, disease_name)
+            
+            if enhanced_medications:
+                # Split medications and add to set
+                med_list = [med.strip() for med in enhanced_medications.split(';') if med.strip()]
+                all_medications.update(med_list)
+                
+                # Track disease associations for each medication
+                for medication in med_list:
+                    if medication not in medication_to_diseases:
+                        medication_to_diseases[medication] = []
+                    medication_to_diseases[medication].append(disease_name)
+    
+    # Sort medications alphabetically
+    sorted_medications = sorted(list(all_medications))
+    
+    # Create the table headers
+    header_row = 8
+    medications_ws[f'A{header_row}'] = 'MEDICATION NAME'
+    medications_ws[f'B{header_row}'] = 'WHAT IS'
+    medications_ws[f'C{header_row}'] = 'SIDE EFFECTS'
+    medications_ws[f'D{header_row}'] = 'CALL A DOCTOR IF'
+    medications_ws[f'E{header_row}'] = 'GO TO ER IF'
+    medications_ws[f'F{header_row}'] = 'DISEASE TAG'
+    
+    # Style header row
+    for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+        cell = medications_ws[f'{col}{header_row}']
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color="5B9BD5", end_color="5B9BD5", fill_type="solid")
+        cell.border = thin_border
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+    
+    # Add all unique medications (sorted alphabetically)
+    for i, medication in enumerate(sorted_medications):
+        row_num = header_row + 1 + i
+        
+        # Get disease associations for this medication
+        diseases_for_med = medication_to_diseases.get(medication, [])
+        disease_tag = '; '.join(diseases_for_med) if diseases_for_med else 'Unknown'
+        
+        medications_ws[f'A{row_num}'] = medication
+        medications_ws[f'B{row_num}'] = ''  # To be filled with "What Is" data
+        medications_ws[f'C{row_num}'] = ''  # To be filled with "Side Effects" data
+        medications_ws[f'D{row_num}'] = ''  # To be filled with "Call a Doctor If" data
+        medications_ws[f'E{row_num}'] = ''  # To be filled with "Go to ER If" data
+        medications_ws[f'F{row_num}'] = disease_tag  # Disease Tag - populated immediately
+        
+        # Add borders and formatting
+        for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+            cell = medications_ws[f'{col}{row_num}']
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=True, vertical='top')
+        
+        # Alternate row colors for better readability
+        if i % 2 == 0:
+            for col in ['A', 'B', 'C', 'D', 'E', 'F']:
+                medications_ws[f'{col}{row_num}'].fill = PatternFill(start_color="F8F9FA", end_color="F8F9FA", fill_type="solid")
+    
+    # Add summary information
+    summary_row = header_row + len(sorted_medications) + 2
+    medications_ws[f'A{summary_row}'] = 'ENHANCED SUMMARY'
+    medications_ws[f'A{summary_row}'].font = Font(bold=True, size=12)
+    medications_ws[f'A{summary_row}'].fill = PatternFill(start_color="E2E6EA", end_color="E2E6EA", fill_type="solid")
+    
+    medications_ws[f'A{summary_row+1}'] = f'Total Unique Medications: {len(sorted_medications)}'
+    medications_ws[f'A{summary_row+1}'].font = Font(bold=True)
+    
+    medications_ws[f'A{summary_row+2}'] = f'Diseases Analyzed: {len(target_diseases)}'
+    medications_ws[f'A{summary_row+2}'].font = Font(bold=True)
+    
+    medications_ws[f'A{summary_row+3}'] = 'Enhancement: Simple drug names only - ready for production_scraper_LLM.py'
+    medications_ws[f'A{summary_row+3}'].font = Font(bold=True)
+    
+    medications_ws[f'A{summary_row+4}'] = 'Next Steps: Populate columns B-E with medication data (What Is, Side Effects, Call Doctor, Go to ER)'
+    medications_ws[f'A{summary_row+4}'].font = Font(italic=True)
+    medications_ws.merge_cells(f'A{summary_row+4}:F{summary_row+4}')
+    
+    # Set column widths for better display
+    medications_ws.column_dimensions['A'].width = 30  # Medication Name
+    medications_ws.column_dimensions['B'].width = 40  # What Is
+    medications_ws.column_dimensions['C'].width = 35  # Side Effects
+    medications_ws.column_dimensions['D'].width = 30  # Call a Doctor If
+    medications_ws.column_dimensions['E'].width = 30  # Go to ER If
+    medications_ws.column_dimensions['F'].width = 40  # Disease Tag
+    
+    print(f"✓ Created enhanced 'All Unique Medications' sheet with {len(sorted_medications)} unique medications")
+
 def create_unique_medications_sheet(wb, df, target_diseases):
     """
     Create a sheet with all unique medications from main diseases, sorted alphabetically
@@ -503,6 +795,7 @@ def create_unique_medications_sheet(wb, df, target_diseases):
     print(f"✓ Created 'All Unique Medications' sheet with {len(sorted_medications)} unique medications")
 
 if __name__ == "__main__":
-    print("Creating Complete Main Diseases Analysis with ALL Medications...")
+    print("Creating Enhanced Main Diseases Analysis with LLM-Enhanced Medications...")
+    print("🤖 This will enhance existing medications with comprehensive AI-powered coverage")
     output_file = create_main_diseases_analysis_v3()
-    print(f"Complete analysis with ALL medications finished! File saved at: {output_file}")
+    print(f"Enhanced analysis with comprehensive medications finished! File saved at: {output_file}")
