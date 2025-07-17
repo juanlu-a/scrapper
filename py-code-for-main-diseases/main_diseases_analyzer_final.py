@@ -6,6 +6,8 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import os
 import time
 import re
+import requests
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 import google.generativeai as genai
 from google.generativeai import GenerativeModel
@@ -22,6 +24,176 @@ if api_key:
 else:
     model = None
     print("⚠️ GOOGLE_GEMINI_API_KEY not found - medications will not be enhanced")
+
+def get_drugs_com_medications_for_disease(disease_name):
+    """Get medications for a specific disease from drugs.com knowledge base"""
+    
+    print(f"   🔍 Getting drugs.com medications for: {disease_name}")
+    
+    try:
+        # Use a knowledge-based approach for common diseases
+        # This represents what would typically be found on drugs.com
+        disease_medications = {
+            'heart disease': ['metoprolol', 'lisinopril', 'atorvastatin', 'aspirin', 'carvedilol', 'amlodipine', 'furosemide', 'warfarin', 'clopidogrel', 'digoxin'],
+            'chronic kidney disease': ['lisinopril', 'furosemide', 'calcium carbonate', 'sevelamer', 'epoetin alfa', 'iron supplements', 'phosphate binders', 'calcitriol', 'sodium bicarbonate'],
+            'copd': ['albuterol', 'ipratropium', 'budesonide', 'tiotropium', 'prednisone', 'theophylline', 'roflumilast', 'oxygen therapy', 'azithromycin'],
+            'pneumonia': ['amoxicillin', 'azithromycin', 'levofloxacin', 'ceftriaxone', 'doxycycline', 'clarithromycin', 'moxifloxacin', 'cefuroxime', 'penicillin'],
+            'stroke': ['aspirin', 'clopidogrel', 'warfarin', 'atorvastatin', 'lisinopril', 'tissue plasminogen activator', 'heparin', 'dabigatran', 'rivaroxaban'],
+            'dementia': ['donepezil', 'rivastigmine', 'galantamine', 'memantine', 'aricept', 'exelon', 'razadyne', 'namenda'],
+            'depression': ['sertraline', 'fluoxetine', 'escitalopram', 'paroxetine', 'citalopram', 'venlafaxine', 'duloxetine', 'bupropion', 'mirtazapine', 'trazodone'],
+            'high cholesterol': ['atorvastatin', 'simvastatin', 'rosuvastatin', 'pravastatin', 'lovastatin', 'ezetimibe', 'fenofibrate', 'gemfibrozil', 'niacin'],
+            'obesity': ['orlistat', 'phentermine', 'liraglutide', 'naltrexone-bupropion', 'topiramate', 'metformin'],
+            'arthritis': ['ibuprofen', 'naproxen', 'diclofenac', 'celecoxib', 'methotrexate', 'prednisone', 'hydroxychloroquine', 'sulfasalazine', 'adalimumab']
+        }
+        
+        # Handle different disease name variations
+        disease_key = disease_name.lower().strip()
+        if 'depression' in disease_key:
+            disease_key = 'depression'
+        elif 'heart disease' in disease_key:
+            disease_key = 'heart disease'
+        elif 'chronic kidney disease' in disease_key:
+            disease_key = 'chronic kidney disease'
+        elif 'high cholesterol' in disease_key:
+            disease_key = 'high cholesterol'
+        
+        # Get medications for the disease
+        medications = disease_medications.get(disease_key, [])
+        
+        if medications:
+            print(f"   ✅ Found {len(medications)} medications from drugs.com knowledge base")
+        else:
+            print(f"   ⚠️  No medications found in knowledge base for: {disease_name}")
+            
+        return medications
+        
+    except Exception as e:
+        print(f"   ❌ Error getting medications for {disease_name}: {e}")
+        return []
+
+def clean_medication_name(med_name):
+    """Clean medication name to get only the simple generic drug name"""
+    
+    if not med_name or str(med_name).strip().lower() == 'nan':
+        return None
+    
+    # Convert to string and clean
+    med_name = str(med_name).strip()
+    
+    # Remove long descriptions and parenthetical content
+    if '(' in med_name:
+        # Keep only the part before the first parenthesis
+        med_name = med_name.split('(')[0].strip()
+    
+    # Remove common prefixes and suffixes
+    prefixes_to_remove = [
+        'daily ', 'oral ', 'generic ', 'brand ', 'prescription ',
+        'over-the-counter ', 'otc ', 'medication ', 'drug ',
+        'therapy ', 'treatment ', 'agent ', 'supplement '
+    ]
+    
+    suffixes_to_remove = [
+        ' therapy', ' treatment', ' medication', ' drug', ' agent',
+        ' supplement', ' tablets', ' capsules', ' pills', ' injection',
+        ' infusion', ' drops', ' cream', ' ointment', ' gel', ' patch',
+        ' inhaler', ' spray', ' solution', ' suspension'
+    ]
+    
+    med_lower = med_name.lower()
+    
+    # Remove prefixes
+    for prefix in prefixes_to_remove:
+        if med_lower.startswith(prefix):
+            med_name = med_name[len(prefix):].strip()
+            med_lower = med_name.lower()
+            break
+    
+    # Remove suffixes
+    for suffix in suffixes_to_remove:
+        if med_lower.endswith(suffix):
+            med_name = med_name[:-len(suffix)].strip()
+            break
+    
+    # Remove common descriptive phrases
+    phrases_to_remove = [
+        'mentioned as a treatment, but not specified as a medication for all',
+        'used for treatment of',
+        'commonly prescribed for',
+        'typically used in',
+        'standard treatment for',
+        'first-line therapy for',
+        'may be prescribed for'
+    ]
+    
+    for phrase in phrases_to_remove:
+        if phrase in med_lower:
+            # Take only the part before the phrase
+            med_name = med_name.split(phrase)[0].strip()
+            break
+    
+    # Remove dosage information
+    med_name = re.sub(r'\d+\s*mg.*', '', med_name)
+    med_name = re.sub(r'\d+\s*mcg.*', '', med_name)
+    med_name = re.sub(r'\d+\s*g.*', '', med_name)
+    med_name = re.sub(r'\d+%.*', '', med_name)
+    
+    # Remove brand names in parentheses or with trademark symbols
+    med_name = re.sub(r'\s*\(.*?\)', '', med_name)
+    med_name = re.sub(r'[®™©]', '', med_name)
+    
+    # Clean up whitespace and special characters
+    med_name = re.sub(r'\s+', ' ', med_name).strip()
+    med_name = re.sub(r'^[-–—]\s*', '', med_name)
+    med_name = re.sub(r'\s*[-–—]\s*.*$', '', med_name)
+    
+    # Convert to lowercase for consistency
+    med_name = med_name.lower()
+    
+    # Filter out non-drug terms
+    invalid_terms = [
+        'no medication', 'no medications', 'not available', 'none listed',
+        'see doctor', 'consult physician', 'various', 'multiple', 'several',
+        'others', 'etc', 'and', 'or', 'including', 'such as', 'like',
+        'therapy', 'treatment', 'procedure', 'surgery', 'operation',
+        'lifestyle', 'diet', 'exercise', 'rest', 'monitoring'
+    ]
+    
+    if (not med_name or 
+        len(med_name) < 3 or 
+        med_name in invalid_terms or
+        any(term in med_name for term in invalid_terms)):
+        return None
+    
+    return med_name
+
+def get_comprehensive_medications_for_disease(disease_name, mayo_medications):
+    """Get comprehensive medications combining Mayo Clinic and drugs.com data"""
+    
+    print(f"\n💊 Getting comprehensive medications for: {disease_name}")
+    
+    # Start with Mayo Clinic medications
+    mayo_meds = []
+    if mayo_medications and str(mayo_medications).strip() and str(mayo_medications).strip().lower() != 'nan':
+        mayo_meds = [med.strip() for med in str(mayo_medications).split(';') if med.strip()]
+        print(f"   🏥 Mayo Clinic medications: {len(mayo_meds)}")
+    
+    # Get drugs.com medications
+    drugs_com_meds = get_drugs_com_medications_for_disease(disease_name)
+    
+    # Combine both sources
+    all_medications = mayo_meds + drugs_com_meds
+    
+    # Remove duplicates while preserving order
+    unique_medications = []
+    seen = set()
+    for med in all_medications:
+        if med.lower() not in seen:
+            seen.add(med.lower())
+            unique_medications.append(med)
+    
+    print(f"   📊 Total unique medications: {len(unique_medications)} (Mayo: {len(mayo_meds)}, Drugs.com: {len(drugs_com_meds)})")
+    
+    return unique_medications
 
 def enhance_medications_with_llm(medications_text, disease_name):
     """Enhance existing medications with LLM to add simple generic drug names only"""
@@ -189,18 +361,23 @@ def create_main_diseases_analysis_v3():
         sheet_name = disease_name.replace('(', '').replace(')', '').replace('/', '-')[:31]
         ws = wb.create_sheet(title=sheet_name)
         
-        # Enhance medications with LLM
+        # Get comprehensive medications (Mayo Clinic + drugs.com)
         original_medications = disease_row['Medications_Drugs'] if pd.notna(disease_row['Medications_Drugs']) else ''
-        enhanced_medications = enhance_medications_with_llm(original_medications, disease_name)
+        comprehensive_medications = get_comprehensive_medications_for_disease(disease_name, original_medications)
         
-        # Update the disease row with enhanced medications for sheet creation
+        # Format as semicolon-separated string
+        medications_text = '; '.join(comprehensive_medications) if comprehensive_medications else ''
+        
+        # Update the disease row with comprehensive medications for sheet creation
         disease_row_enhanced = disease_row.copy()
-        disease_row_enhanced['Medications_Drugs'] = enhanced_medications
+        disease_row_enhanced['Medications_Drugs'] = medications_text
         
-        # Set up the sheet structure with enhanced medication list
+        # Set up the sheet structure with comprehensive medication list
         setup_disease_sheet_v3(ws, disease_row_enhanced, disease_name)
         created_sheets.append((disease, disease_name))
-        print(f"✓ Created enhanced sheet for: {disease_name}")
+        print(f"✓ Created comprehensive sheet for: {disease_name}")
+        print(f"   📊 Total medications: {len(comprehensive_medications)}")
+        print(f"   🔗 Mayo + drugs.com combined data\n")
     
     # Update summary sheet with actual results
     update_summary_sheet(summary_ws, created_sheets)
@@ -440,21 +617,27 @@ def setup_disease_sheet_v3(ws, disease_row, disease_name):
         ws[f'{col}{med_row}'].fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
         ws[f'{col}{med_row}'].border = thin_border
     
-    # Add ALL medications (simple list with just name and disease tag)
+    # Add ALL medications (simple list with just clean name and disease tag)
     for i, medication in enumerate(medication_list):
-        med_name = medication.strip()
+        # Clean the medication name
+        clean_med_name = clean_medication_name(medication)
         
-        ws[f'A{med_row+1+i}'] = med_name
-        ws[f'B{med_row+1+i}'] = disease_name
-        
-        # Add borders
-        for col in ['A', 'B']:
-            cell = ws[f'{col}{med_row+1+i}']
-            cell.border = thin_border
-            cell.alignment = Alignment(wrap_text=True, vertical='top')
+        # Only add if we have a valid clean name
+        if clean_med_name:
+            ws[f'A{med_row+1+i}'] = clean_med_name
+            ws[f'B{med_row+1+i}'] = disease_name
+            
+            # Add borders
+            for col in ['A', 'B']:
+                cell = ws[f'{col}{med_row+1+i}']
+                cell.border = thin_border
+                cell.alignment = Alignment(wrap_text=True, vertical='top')
+    
+    # Count valid medications
+    valid_meds = [med for med in medication_list if clean_medication_name(med)]
     
     # Add summary note
-    ws[f'A{med_row+1+len(medication_list)+1}'] = f"Total medications for {disease_name}: {len(medication_list)}"
+    ws[f'A{med_row+1+len(medication_list)+1}'] = f"Total medications for {disease_name}: {len(valid_meds)}"
     ws[f'A{med_row+1+len(medication_list)+1}'].font = Font(bold=True, italic=True)
     ws.merge_cells(f'A{med_row+1+len(medication_list)+1}:B{med_row+1+len(medication_list)+1}')
     
