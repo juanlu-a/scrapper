@@ -386,9 +386,9 @@ def create_main_diseases_analysis_v3():
     create_unique_medications_sheet_enhanced(wb, df, target_diseases)
     
     # Save the workbook
-    output_path = '../Analysis/main_diseases_analysis_final_enhanced.xlsx'
+    output_path = '../Analysis/main_diseases_analysis_final.xlsx'
     wb.save(output_path)
-    print(f"\nEnhanced analysis saved to: {output_path}")
+    print(f"\nAnalysis saved to: {output_path}")
     
     return output_path
 
@@ -970,7 +970,7 @@ def create_unique_medications_sheet(wb, df, target_diseases):
     print(f"✓ Created 'All Unique Medications' sheet with {len(sorted_medications)} unique medications")
 
 if __name__ == "__main__":
-    print("Creating Enhanced Main Diseases Analysis with LLM-Enhanced Medications...")
+    print("Creating Main Diseases Analysis with Comprehensive Medications...")
     print("🤖 This will enhance existing medications with comprehensive AI-powered coverage")
     output_file = create_main_diseases_analysis_v3()
-    print(f"Enhanced analysis with comprehensive medications finished! File saved at: {output_file}")
+    print(f"Analysis with comprehensive medications finished! File saved at: {output_file}")
