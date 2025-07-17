@@ -11,74 +11,62 @@ import google.generativeai as genai
 from google.generativeai import GenerativeModel
 
 # Load environment variables
-load_dotenv('../.env')
+load_dotenv('/Users/juanlu/Documents/Wye/scrapper/.env')
 
 # Initialize LLM
 api_key = os.getenv('GOOGLE_GEMINI_API_KEY')
 if api_key:
     genai.configure(api_key=api_key)
     model = GenerativeModel('gemini-1.5-flash')
+    print("✅ LLM initialized successfully")
 else:
     model = None
     print("⚠️ GOOGLE_GEMINI_API_KEY not found - medications will not be enhanced")
 
 def enhance_medications_with_llm(medications_text, disease_name):
-    """Enhance existing medications with LLM to add simple drug names only"""
+    """Enhance existing medications with LLM to add simple generic drug names only"""
     
     if not model:
         return medications_text  # Return original if no LLM available
     
     try:
-        # Parse existing medications and clean them
+        # Parse existing medications
         existing_meds = [med.strip() for med in medications_text.split(';') if med.strip()] if medications_text else []
         
-        # Clean existing medications (remove formatting, parentheses, etc.)
-        cleaned_existing = []
-        for med in existing_meds:
-            # Remove **bold** formatting
-            clean_med = re.sub(r'\*\*([^*]+)\*\*', r'\1', med)
-            # Remove parentheses and content inside
-            clean_med = re.sub(r'\s*\([^)]*\)', '', clean_med)
-            # Remove extra whitespace
-            clean_med = re.sub(r'\s+', ' ', clean_med).strip()
-            if clean_med:
-                cleaned_existing.append(clean_med)
-        
-        print(f"   🤖 Enhancing {len(cleaned_existing)} existing medications for {disease_name}")
+        print(f"   🤖 Enhancing {len(existing_meds)} existing medications for {disease_name}")
         
         prompt = f"""
-You are a pharmaceutical expert. I need SIMPLE drug names only for "{disease_name}".
+You are a pharmaceutical expert. I need you to provide a comprehensive list of GENERIC DRUG NAMES (active ingredients) for treating "{disease_name}".
 
-EXISTING MEDICATIONS (cleaned):
-{'; '.join(cleaned_existing) if cleaned_existing else 'None listed'}
+EXISTING MEDICATIONS (keep all):
+{'; '.join(existing_meds) if existing_meds else 'None listed'}
 
-Please provide a comprehensive list of medications for {disease_name} with these requirements:
+Please provide a comprehensive list of GENERIC DRUG NAMES ONLY for {disease_name}:
 
-STRICT REQUIREMENTS:
+REQUIREMENTS:
 1. Keep ALL existing medications (don't remove any)
-2. Add 15-25 additional relevant medications
-3. SIMPLE DRUG NAMES ONLY - no brand names, no parentheses, no extra information
-4. Generic names preferred (like "metformin" not "Metformin (Glucophage)")
-5. No formatting like **bold** or (parentheses)
-6. One word or simple compound names when possible
-7. Only real, approved medications for {disease_name}
+2. Add 15-25 additional generic drug names for {disease_name}
+3. Use ONLY generic names (active ingredients) - NO brand names
+4. Use ONLY simple drug names - NO parentheses, asterisks, or extra formatting
+5. Cover all treatment categories: first-line, second-line, alternatives
+6. Include medications for symptoms, complications, and comorbidities
+7. Focus on drugs actually prescribed for {disease_name}
 
-EXAMPLES OF GOOD NAMES:
-- aspirin
-- metformin  
-- lisinopril
-- atorvastatin
-- amoxicillin
+EXAMPLES of correct format:
+- "metformin" (not "Metformin**" or "Metformin (Glucophage)")
+- "lisinopril" (not "Lisinopril*" or "Lisinopril (Prinivil)")
+- "atorvastatin" (not "Atorvastatin**" or "Atorvastatin (Lipitor)")
 
-EXAMPLES OF BAD NAMES:
-- Aspirin (Bayer)
-- **Metformin** (Glucophage)
-- Lisinopril (brand name Prinivil)
-- Atorvastatin 20mg tablets
+For {disease_name}, include generic drugs for:
+- Primary treatment
+- Symptom management  
+- Comorbidity treatment
+- Prevention
+- Both acute and chronic management
 
-Format as semicolon-separated list with simple drug names only.
+Format as semicolon-separated list of SIMPLE GENERIC DRUG NAMES only.
 
-SIMPLE DRUG NAMES LIST:
+GENERIC DRUG NAMES:
 """
 
         result = model.generate_content(prompt)
@@ -89,36 +77,40 @@ SIMPLE DRUG NAMES LIST:
             response = response.split(":", 1)[1].strip()
         
         # Clean and split
-        enhanced_medications = [med.strip() for med in response.split(';') if med.strip()]
+        raw_medications = [med.strip() for med in response.split(';') if med.strip()]
         
-        # Further cleaning to ensure simple names only
-        final_medications = []
-        for med in enhanced_medications:
-            # Remove any remaining formatting
-            clean_med = re.sub(r'\*\*([^*]+)\*\*', r'\1', med)  # Remove **bold**
-            clean_med = re.sub(r'\s*\([^)]*\)', '', clean_med)  # Remove parentheses
-            clean_med = re.sub(r'\s*\[[^\]]*\]', '', clean_med)  # Remove brackets
-            clean_med = re.sub(r'\s+', ' ', clean_med).strip()  # Clean whitespace
+        # Clean each medication name to be simple
+        cleaned_medications = []
+        for med in raw_medications:
+            # Remove formatting symbols
+            med = re.sub(r'\*+', '', med)  # Remove asterisks
+            med = re.sub(r'\(.*?\)', '', med)  # Remove parentheses and content
+            med = re.sub(r'\[.*?\]', '', med)  # Remove brackets and content
+            med = re.sub(r'["""]', '', med)  # Remove quotes
+            med = re.sub(r'[-–—].*', '', med)  # Remove dashes and everything after
+            med = re.sub(r'\s+', ' ', med).strip()  # Clean whitespace
             
-            # Only keep if it's a simple drug name
-            if (clean_med and 
-                len(clean_med) > 2 and 
-                not clean_med.lower().startswith(('note:', 'simple:', 'medications:', 'drugs:', 'list:')) and
-                not clean_med.lower().endswith(('list', 'medications', 'drugs', 'therapy', 'treatment', 'mg', 'tablets')) and
-                clean_med.lower() not in ['etc', 'others', 'various', 'and', 'or'] and
-                not any(word in clean_med.lower() for word in ['brand', 'generic', 'also known', 'trade name'])):
-                final_medications.append(clean_med)
+            # Convert to lowercase for consistency
+            med = med.lower()
+            
+            # Filter out non-drug terms and ensure it's a simple drug name
+            if (len(med) > 2 and 
+                (med.isalpha() or (len(med.split()) == 1 and med.replace('-', '').isalpha())) and
+                not med.startswith(('note', 'generic', 'drug', 'medication', 'treatment')) and
+                not med.endswith(('therapy', 'treatment', 'drugs', 'medications')) and
+                med not in ['etc', 'others', 'various', 'including', 'such', 'as', 'and', 'or']):
+                cleaned_medications.append(med)
         
         # Remove duplicates while preserving order
         seen = set()
         unique_medications = []
-        for med in final_medications:
-            if med.lower() not in seen:
-                seen.add(med.lower())
+        for med in cleaned_medications:
+            if med not in seen:
+                seen.add(med)
                 unique_medications.append(med)
         
         enhanced_text = '; '.join(unique_medications)
-        print(f"   ✅ Enhanced from {len(cleaned_existing)} to {len(unique_medications)} simple drug names")
+        print(f"   ✅ Enhanced from {len(existing_meds)} to {len(unique_medications)} simple generic drugs")
         
         # Add delay to be respectful to API
         time.sleep(1.5)
@@ -217,7 +209,7 @@ def create_main_diseases_analysis_v3():
     create_unique_medications_sheet_enhanced(wb, df, target_diseases)
     
     # Save the workbook
-    output_path = '../Analysis/main_diseases_analysis_final.xlsx'
+    output_path = '../Analysis/main_diseases_analysis_final_enhanced.xlsx'
     wb.save(output_path)
     print(f"\nEnhanced analysis saved to: {output_path}")
     
@@ -500,7 +492,7 @@ def create_unique_medications_sheet_enhanced(wb, df, target_diseases):
     medications_ws = wb.create_sheet(title="All Unique Medications")
     
     # Sheet title
-    medications_ws['A1'] = 'ALL UNIQUE MEDICATIONS - SIMPLE DRUG NAMES (KISS)'
+    medications_ws['A1'] = 'ALL UNIQUE MEDICATIONS FROM MAIN DISEASES (LLM-ENHANCED)'
     medications_ws['A1'].font = header_font
     medications_ws['A1'].fill = header_fill
     medications_ws.merge_cells('A1:F1')
@@ -515,11 +507,11 @@ def create_unique_medications_sheet_enhanced(wb, df, target_diseases):
     medications_ws['A3'].alignment = Alignment(horizontal='center')
     
     medications_ws['A4'] = 'Purpose:'
-    medications_ws['B4'] = 'Simple drug names (ready for production_scraper_LLM.py)'
+    medications_ws['B4'] = 'Comprehensive list of all unique medications (original + LLM-enhanced)'
     medications_ws['A5'] = 'Source:'
     medications_ws['B5'] = 'final_diseases_complete.csv + AI Enhancement'
     medications_ws['A6'] = 'Enhancement:'
-    medications_ws['B6'] = 'LLM-powered simple drug names (no commercial names, no formatting)'
+    medications_ws['B6'] = 'LLM-powered comprehensive medication coverage'
     
     # Style the info cells
     for row in [4, 5, 6]:
@@ -622,7 +614,7 @@ def create_unique_medications_sheet_enhanced(wb, df, target_diseases):
     medications_ws[f'A{summary_row+2}'] = f'Diseases Analyzed: {len(target_diseases)}'
     medications_ws[f'A{summary_row+2}'].font = Font(bold=True)
     
-    medications_ws[f'A{summary_row+3}'] = 'Enhancement: Simple drug names only - ready for production_scraper_LLM.py'
+    medications_ws[f'A{summary_row+3}'] = 'Enhancement: Original medications + LLM-powered comprehensive coverage'
     medications_ws[f'A{summary_row+3}'].font = Font(bold=True)
     
     medications_ws[f'A{summary_row+4}'] = 'Next Steps: Populate columns B-E with medication data (What Is, Side Effects, Call Doctor, Go to ER)'
