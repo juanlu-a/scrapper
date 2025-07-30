@@ -156,20 +156,109 @@ def split_medical_items(text):
     if not text or pd.isna(text):
         return []
     
-    # Common separators in medical text
-    separators = [
-        ';', ',', '\n', '•', '◦', '-', '·',
-        ' and ', ' or ', ' / ', ' | '
+    # Skip very long descriptive text (likely descriptions, not item lists)
+    if len(text) > 300:
+        return []
+    
+    # Special handling for common compound medical terms that should NOT be split
+    compound_terms = [
+        'heat and cold therapy',
+        'heat/cold therapy', 
+        'cold and heat therapy',
+        'physical and occupational therapy',
+        'speech and language therapy'
     ]
     
-    items = [text]
+    # Check if this text contains compound terms that shouldn't be split
+    text_lower = text.lower().strip()
+    is_single_compound_term = False
     
-    # Split by each separator
-    for separator in separators:
-        new_items = []
-        for item in items:
-            new_items.extend(item.split(separator))
-        items = new_items
+    # Only treat as single compound if the ENTIRE text is just the compound term
+    for compound in compound_terms:
+        if text_lower == compound or text_lower == compound.strip():
+            is_single_compound_term = True
+            break
+    
+    if is_single_compound_term:
+        # If it's a single compound term, return it as a single item
+        cleaned = clean_item_name(text)
+        return [cleaned] if cleaned and len(cleaned) > 3 else []
+    
+    # Handle parentheses carefully AND preserve compound terms
+    # First split by semicolons while respecting parentheses
+    items = []
+    current_item = ""
+    paren_depth = 0
+    
+    i = 0
+    while i < len(text):
+        char = text[i]
+        
+        if char == '(':
+            paren_depth += 1
+            current_item += char
+        elif char == ')':
+            paren_depth -= 1
+            current_item += char
+        elif char == ';' and paren_depth == 0:
+            # Only split on semicolon if we're not inside parentheses
+            if current_item.strip():
+                items.append(current_item.strip())
+            current_item = ""
+        else:
+            current_item += char
+        
+        i += 1
+    
+    # Add the last item
+    if current_item.strip():
+        items.append(current_item.strip())
+    
+    # Now protect compound terms within each item
+    protected_items = []
+    for item in items:
+        item_lower = item.lower().strip()
+        
+        # Check if this individual item is a compound term that should stay whole
+        is_protected = any(compound in item_lower for compound in compound_terms)
+        
+        if is_protected:
+            # Keep the whole item as-is
+            protected_items.append(item)
+        else:
+            # This item can be further split if needed
+            protected_items.append(item)
+    
+    items = protected_items
+    
+    # If no semicolons were found, try other separators (but more carefully)
+    if len(items) == 1:
+        original_text = items[0]
+        
+        # Try splitting by other separators only if no parentheses
+        if '(' not in original_text or ')' not in original_text:
+            separators = ['\n', ' and ', ' or ', ' / ', ' | ', ',']
+            
+            for separator in separators:
+                if separator in original_text:
+                    # Special check: don't split if it would break compound terms
+                    potential_items = original_text.split(separator)
+                    
+                    # Check if any item contains compound terms
+                    safe_to_split = True
+                    for item in potential_items:
+                        item_lower = item.lower().strip()
+                        for compound in compound_terms:
+                            if compound in item_lower and item_lower != compound:
+                                # This item contains part of a compound term
+                                safe_to_split = False
+                                break
+                        if not safe_to_split:
+                            break
+                    
+                    if safe_to_split:
+                        items = potential_items
+                        break
     
     # Clean and filter items
     cleaned_items = []
