@@ -24,132 +24,168 @@ if not api_key:
 genai.configure(api_key=api_key)
 model = GenerativeModel('gemini-1.5-flash')
 
-def extract_tests_and_treatments():
+def extract_tests_and_treatments_from_main_diseases_excel():
     """
-    Extract all unique tests and treatments from the top 10 diseases
-    and create a comprehensive Excel file with detailed information
+    Extract all unique tests and treatments from the main_diseases_analysis_final.xlsx file
+    and create a comprehensive Excel file with detailed information.
+    Each test/treatment will only be associated with its main disease (not all scraped diseases).
     """
     
-    # Target diseases to extract (same as main_diseases_analyzer_final.py)
-    target_diseases = [
-        'Heart disease',
-        'Chronic kidney disease',
-        'COPD',
-        'Pneumonia',
-        'Stroke',
-        'Dementia',
-        'Depression (major depressive disorder)',
-        'High cholesterol',
-        'Obesity', 
-        'Arthritis'
-    ]
+    from openpyxl import load_workbook
     
-    # Read the CSV file
-    csv_path = '/Users/juanlu/Documents/Wye/scrapper/CSV/final_diseases_complete.csv'
-    df = pd.read_csv(csv_path)
+    # Path to the main diseases analysis Excel file
+    excel_path = '../Analysis/main_diseases_analysis_final.xlsx'
     
-    print(f"📊 Processing {len(target_diseases)} target diseases...")
-    print(f"📄 Source data: {len(df)} total diseases in CSV")
+    print(f"📊 Reading tests and treatments from: {excel_path}")
     
-    # Collect all tests and treatments with their disease associations
-    all_tests = {}  # {test_name: [list_of_diseases]}
-    all_treatments = {}  # {treatment_name: [list_of_diseases]}
-    
-    processed_diseases = []
-    
-    for disease in target_diseases:
-        print(f"\n🔍 Processing: {disease}")
+    try:
+        # Load the workbook
+        wb = load_workbook(excel_path, data_only=True)
         
-        # Find matching rows with specific matching (same logic as main analyzer)
-        if disease == 'Heart disease':
-            disease_data = df[df['Disease_Name_English'].str.contains('^Heart disease$', case=False, na=False, regex=True)]
-        elif disease == 'Obesity':
-            disease_data = df[df['Disease_Name_English'].str.contains('^Obesity$', case=False, na=False, regex=True)]
-        elif disease == 'Stroke':
-            disease_data = df[df['Disease_Name_English'].str.contains('^Stroke$', case=False, na=False, regex=True)]
-        else:
-            disease_data = df[df['Disease_Name_English'].str.contains(f'^{disease}$', case=False, na=False, regex=True)]
+        # Collect all tests and treatments with their main disease associations
+        all_tests = {}  # {test_name: [list_of_main_diseases]}
+        all_treatments = {}  # {treatment_name: [list_of_main_diseases]}
         
-        if disease_data.empty:
-            print(f"  ⚠️ No exact match found for {disease}, trying partial match...")
-            disease_data = df[df['Disease_Name_English'].str.contains(disease, case=False, na=False, regex=False)]
+        processed_diseases = []
+        
+        # Process each sheet (skip Summary and All Unique Medications sheets)
+        skip_sheets = ['Summary', 'All Unique Medications']
+        disease_sheets = [sheet for sheet in wb.sheetnames if sheet not in skip_sheets]
+        
+        print(f"📄 Found {len(disease_sheets)} disease sheets to process")
+        
+        for sheet_name in disease_sheets:
+            print(f"\n🔍 Processing sheet: {sheet_name}")
+            ws = wb[sheet_name]
             
-        if disease_data.empty:
-            print(f"  ❌ No data found for {disease}")
-            continue
+            # Extract disease name from the sheet structure
+            disease_name = None
+            spanish_name = None
             
-        # Get the first match
-        disease_row = disease_data.iloc[0]
-        disease_name = disease_row['Disease_Name_English']
-        disease_spanish = disease_row['Disease_Name_Spanish']
-        
-        processed_diseases.append({
-            'original': disease,
-            'matched': disease_name,
-            'spanish': disease_spanish
-        })
-        
-        print(f"  ✅ Found: {disease_name}")
-        
-        # Extract Tests
-        tests_raw = disease_row['Tests'] if pd.notna(disease_row['Tests']) else ''
-        if tests_raw:
-            # Split by common separators and clean
-            test_items = split_medical_items(tests_raw)
-            print(f"  📋 Found {len(test_items)} tests")
+            # Look for disease information in the sheet
+            for row in ws.iter_rows(min_row=1, max_row=10, values_only=True):
+                if row and row[0]:
+                    if 'English Name:' in str(row[0]):
+                        disease_name = row[1] if len(row) > 1 else None
+                    elif 'Spanish Name:' in str(row[0]):
+                        spanish_name = row[1] if len(row) > 1 else None
             
-            for test in test_items:
-                test = clean_item_name(test)
-                if test and len(test) > 2:  # Only meaningful test names
-                    if test not in all_tests:
-                        all_tests[test] = []
-                    all_tests[test].append(disease_name)
-        
-        # Extract Treatments
-        treatments_raw = disease_row['Treatments'] if pd.notna(disease_row['Treatments']) else ''
-        if treatments_raw:
-            # Split by common separators and clean
-            treatment_items = split_medical_items(treatments_raw)
-            print(f"  💊 Found {len(treatment_items)} treatments")
+            if not disease_name:
+                # Fallback: use sheet name as disease name
+                disease_name = sheet_name.replace('-', ' ').replace('(', '').replace(')', '').strip()
+                print(f"  ⚠️ Using sheet name as disease name: {disease_name}")
             
-            for treatment in treatment_items:
-                treatment = clean_item_name(treatment)
-                if treatment and len(treatment) > 2:  # Only meaningful treatment names
-                    if treatment not in all_treatments:
-                        all_treatments[treatment] = []
-                    all_treatments[treatment].append(disease_name)
-    
-    print(f"\n📊 EXTRACTION SUMMARY:")
-    print(f"✅ Processed diseases: {len(processed_diseases)}")
-    print(f"🧪 Unique tests found: {len(all_tests)}")
-    print(f"💊 Unique treatments found: {len(all_treatments)}")
-    
-    # Enhance with Mayo Clinic data
-    enhanced_tests = enhance_items_with_mayo_clinic(all_tests, "test")
-    enhanced_treatments = enhance_items_with_mayo_clinic(all_treatments, "treatment")
-    
-    # Create Excel workbook
-    wb = Workbook()
-    
-    # Create Tests sheet
-    tests_ws = wb.active
-    tests_ws.title = "Tests"
-    create_enhanced_tests_sheet(tests_ws, enhanced_tests)
-    
-    # Create Treatments sheet
-    treatments_ws = wb.create_sheet(title="Treatments")
-    create_enhanced_treatments_sheet(treatments_ws, enhanced_treatments)
-    
-    # Create Summary sheet
-    summary_ws = wb.create_sheet(title="Summary")
-    create_enhanced_summary_sheet(summary_ws, processed_diseases, enhanced_tests, enhanced_treatments)
-    
-    # Save the workbook
-    output_path = '/Users/juanlu/Documents/Wye/scrapper/Analysis/tests_treatments_analysis.xlsx'
-    wb.save(output_path)
-    print(f"\n💾 Analysis saved to: {output_path}")
-    
-    return output_path
+            processed_diseases.append({
+                'original': disease_name,
+                'matched': disease_name,
+                'spanish': spanish_name or disease_name
+            })
+            
+            print(f"  ✅ Processing disease: {disease_name}")
+            
+            # Extract Tests from the sheet
+            tests_found = 0
+            
+            for row in ws.iter_rows(values_only=True):
+                if row and row[0]:
+                    cell_value = str(row[0]).strip()
+                    
+                    # Extract test information when we find "Diagnostic Tests:" row
+                    if cell_value == 'Diagnostic Tests:':
+                        # The test information is in the next cell (B column)
+                        test_content = row[1] if len(row) > 1 and row[1] else ''
+                        if test_content and str(test_content).strip():
+                            test_items = split_medical_items(str(test_content))
+                            for test in test_items:
+                                test = clean_item_name(test)
+                                if test and len(test) > 2:
+                                    # Add disease to the test's disease list
+                                    if test not in all_tests:
+                                        all_tests[test] = []
+                                    if disease_name not in all_tests[test]:
+                                        all_tests[test].append(disease_name)
+                                    tests_found += 1
+                        break  # Found the tests row, no need to continue
+            
+            print(f"  📋 Found {tests_found} tests")
+            
+            # Extract Treatments from the sheet
+            treatments_found = 0
+            
+            for row in ws.iter_rows(values_only=True):
+                if row and row[0]:
+                    cell_value = str(row[0]).strip()
+                    
+                    # Extract treatment information when we find "Available Treatments:" row
+                    if cell_value == 'Available Treatments:':
+                        # The treatment information is in the next cell (B column)
+                        treatment_content = row[1] if len(row) > 1 and row[1] else ''
+                        if treatment_content and str(treatment_content).strip():
+                            treatment_items = split_medical_items(str(treatment_content))
+                            for treatment in treatment_items:
+                                treatment = clean_item_name(treatment)
+                                if treatment and len(treatment) > 2:
+                                    # Add disease to the treatment's disease list
+                                    if treatment not in all_treatments:
+                                        all_treatments[treatment] = []
+                                    if disease_name not in all_treatments[treatment]:
+                                        all_treatments[treatment].append(disease_name)
+                                    treatments_found += 1
+                        break  # Found the treatments row, no need to continue
+            
+            print(f"  💊 Found {treatments_found} treatments")
+        
+        wb.close()
+        
+        print(f"\n📊 EXTRACTION SUMMARY:")
+        print(f"✅ Processed diseases: {len(processed_diseases)}")
+        print(f"🧪 Unique tests found: {len(all_tests)}")
+        print(f"💊 Unique treatments found: {len(all_treatments)}")
+        
+        # Show some examples of multi-disease associations
+        print(f"\n📝 Examples of test/treatment disease associations:")
+        test_examples = [(name, diseases) for name, diseases in all_tests.items() if len(diseases) > 1][:3]
+        for test_name, diseases in test_examples:
+            print(f"  🧪 {test_name} → {', '.join(diseases)}")
+        
+        treatment_examples = [(name, diseases) for name, diseases in all_treatments.items() if len(diseases) > 1][:3]
+        for treatment_name, diseases in treatment_examples:
+            print(f"  💊 {treatment_name} → {', '.join(diseases)}")
+        
+        # Enhance with Mayo Clinic data
+        enhanced_tests = enhance_items_with_mayo_clinic(all_tests, "test")
+        enhanced_treatments = enhance_items_with_mayo_clinic(all_treatments, "treatment")
+        
+        # Create Excel workbook
+        wb = Workbook()
+        
+        # Create Tests sheet
+        tests_ws = wb.active
+        tests_ws.title = "Tests"
+        create_enhanced_tests_sheet(tests_ws, enhanced_tests)
+        
+        # Create Treatments sheet
+        treatments_ws = wb.create_sheet(title="Treatments")
+        create_enhanced_treatments_sheet(treatments_ws, enhanced_treatments)
+        
+        # Create Summary sheet
+        summary_ws = wb.create_sheet(title="Summary")
+        create_enhanced_summary_sheet(summary_ws, processed_diseases, enhanced_tests, enhanced_treatments)
+        
+        # Save the workbook
+        output_path = '../Analysis/tests_treatments_enhanced_analysis.xlsx'
+        wb.save(output_path)
+        print(f"\n💾 Enhanced analysis saved to: {output_path}")
+        
+        return output_path
+        
+    except FileNotFoundError:
+        print(f"❌ File not found: {excel_path}")
+        print("Please make sure main_diseases_analysis_final.xlsx exists")
+        return None
+    except Exception as e:
+        print(f"❌ Error reading Excel file: {e}")
+        return None
 
 def split_medical_items(text):
     """Split medical text into individual items using various separators"""
@@ -386,6 +422,7 @@ def create_enhanced_tests_sheet(ws, enhanced_tests):
         ws[f'B{row_num}'] = test_info['spanish_name']
         ws[f'C{row_num}'] = test_info['description']
         ws[f'D{row_num}'] = test_info['background']
+        # Show all main diseases associated with this test
         ws[f'E{row_num}'] = test_info['main_diseases']
         ws[f'F{row_num}'] = len(test_info['diseases'])
         ws[f'G{row_num}'] = test_info['mayo_url'] if test_info['mayo_url'] else 'Not found'
@@ -483,6 +520,7 @@ def create_enhanced_treatments_sheet(ws, enhanced_treatments):
         ws[f'B{row_num}'] = treatment_info['spanish_name']
         ws[f'C{row_num}'] = treatment_info['description']
         ws[f'D{row_num}'] = treatment_info['background']
+        # Show all main diseases associated with this treatment
         ws[f'E{row_num}'] = treatment_info['main_diseases']
         ws[f'F{row_num}'] = len(treatment_info['diseases'])
         ws[f'G{row_num}'] = treatment_info['mayo_url'] if treatment_info['mayo_url'] else 'Not found'
@@ -1097,7 +1135,7 @@ def enhance_items_with_mayo_clinic(items_dict, item_type="test"):
                     'spanish_name': llm_info['spanish_name'],
                     'description': llm_info['description'],
                     'background': llm_info['background'],
-                    'main_diseases': llm_info['main_diseases'],
+                    'main_diseases': '; '.join(diseases) if diseases else 'Unknown',  # Show all main diseases
                     'mayo_url': mayo_url,
                     'mayo_title': mayo_title
                 }
@@ -1110,7 +1148,7 @@ def enhance_items_with_mayo_clinic(items_dict, item_type="test"):
                     'spanish_name': 'No se pudo obtener información',
                     'description': 'Could not retrieve information',
                     'background': 'Could not retrieve information',
-                    'main_diseases': 'Could not retrieve information',
+                    'main_diseases': '; '.join(diseases) if diseases else 'Unknown',  # Show all main diseases
                     'mayo_url': mayo_url,
                     'mayo_title': mayo_title
                 }
@@ -1121,7 +1159,7 @@ def enhance_items_with_mayo_clinic(items_dict, item_type="test"):
                 'spanish_name': 'No encontrado en Mayo Clinic',
                 'description': 'Not found on Mayo Clinic',
                 'background': 'Not found on Mayo Clinic',
-                'main_diseases': 'Not found on Mayo Clinic',
+                'main_diseases': '; '.join(diseases) if diseases else 'Unknown',  # Show all main diseases
                 'mayo_url': None,
                 'mayo_title': None
             }
@@ -1292,52 +1330,20 @@ def extract_tests_and_treatments(df, processed_diseases, column_type):
 def main():
     """Main function to process diseases and generate enhanced Excel analysis."""
     
-    # Load the CSV file
-    df = load_csv_file()
-    if df is None:
-        return
+    print("🚀 Starting Enhanced Tests & Treatments Analysis")
+    print("📊 Reading data from main_diseases_analysis_final.xlsx")
     
-    # Get unique diseases from the CSV
-    all_diseases = get_unique_diseases(df)
+    # Extract tests and treatments from the main diseases Excel file
+    output_path = extract_tests_and_treatments_from_main_diseases_excel()
     
-    # Filter to top 10 most common diseases
-    top_diseases = get_top_diseases(all_diseases)
+    if output_path:
+        print(f"\n✅ Enhanced analysis completed successfully!")
+        print(f"� Output file: {output_path}")
+        print(f"🔍 Each test/treatment is now associated only with its main disease")
+    else:
+        print("\n❌ Analysis failed. Please check the error messages above.")
     
-    # Process diseases
-    processed_diseases = process_diseases(df, top_diseases)
-    
-    # Extract tests and treatments
-    all_tests = extract_tests_and_treatments(df, processed_diseases, 'tests')
-    all_treatments = extract_tests_and_treatments(df, processed_diseases, 'treatments')
-    
-    # Enhance with Mayo Clinic data
-    print("\n🔍 Enhancing tests with Mayo Clinic data...")
-    enhanced_tests = enhance_items_with_mayo_clinic(all_tests, 'test')
-    
-    print("\n🔍 Enhancing treatments with Mayo Clinic data...")
-    enhanced_treatments = enhance_items_with_mayo_clinic(all_treatments, 'treatment')
-    
-    # Create Excel workbook
-    wb = Workbook()
-    wb.remove(wb.active)  # Remove default sheet
-    
-    # Create sheets
-    summary_sheet = wb.create_sheet(title="Summary")
-    tests_sheet = wb.create_sheet(title="Diagnostic Tests")
-    treatments_sheet = wb.create_sheet(title="Treatments")
-    
-    # Fill sheets with enhanced data
-    create_enhanced_summary_sheet(summary_sheet, processed_diseases, enhanced_tests, enhanced_treatments)
-    create_enhanced_tests_sheet(tests_sheet, enhanced_tests)
-    create_enhanced_treatments_sheet(treatments_sheet, enhanced_treatments)
-    
-    # Save the Excel file
-    output_file = "../Analysis/tests_treatments_enhanced_analysis.xlsx"
-    wb.save(output_file)
-    
-    print(f"\n✅ Enhanced Excel file created successfully: {output_file}")
-    print(f"📊 Summary:")
-    print(f"   - Diseases processed: {len(processed_diseases)}")
+    return output_path
     print(f"   - Tests found: {len(enhanced_tests)}")
     print(f"   - Treatments found: {len(enhanced_treatments)}")
     
