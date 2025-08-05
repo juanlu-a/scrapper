@@ -1059,17 +1059,18 @@ CONTENT FROM MAYO CLINIC:
 Please extract the following information in this EXACT format:
 
 SPANISH_NAME: [The Spanish medical translation of "{procedure_name}"]
-DESCRIPTION: [A concise 2-3 sentence description of what this test/procedure is and what it does]
-BACKGROUND: [Background information about when this test is used, why it's performed, what conditions it helps diagnose or treat]
+DESCRIPTION: [ONE simple sentence explaining what this test/procedure is, using easy words]
+BACKGROUND: [ONE simple sentence explaining when doctors use this test, using easy words]
 MAIN_DISEASES: [List the 3-5 main diseases/conditions that this test/procedure is most commonly used for, separated by semicolons]
 
 Guidelines:
-- Be concise but informative
-- Use medical terminology appropriately
+- Use SIMPLE, EVERYDAY words that anyone can understand
+- Keep descriptions to ONE sentence each
+- Avoid complex medical terms - use simple language
 - If specific information is not in the content, write "Information not found"
 - For SPANISH_NAME: provide accurate medical Spanish translation
-- For DESCRIPTION: focus on what the test/procedure is and does
-- For BACKGROUND: explain when and why it's used, what it helps with
+- For DESCRIPTION: explain what it is in simple terms (e.g., "A blood test that checks sugar levels" instead of "A diagnostic assay measuring glucose concentration")
+- For BACKGROUND: explain when it's used in simple terms (e.g., "Doctors use this when they think you might have diabetes" instead of "Utilized for diabetic screening protocols")
 - For MAIN_DISEASES: list the primary medical conditions this test/procedure is used for (e.g., "Heart disease; Diabetes; Hypertension")
 """
 
