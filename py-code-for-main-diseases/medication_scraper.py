@@ -13,6 +13,14 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 import re
 from bs4 import BeautifulSoup
 import json
+import sys
+from tqdm import tqdm
+import colorama
+from colorama import Fore, Back, Style
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Border, Side, Alignment, NamedStyle
+
+colorama.init(autoreset=True)
 
 class MedicationScraper:
     def __init__(self):
@@ -21,6 +29,195 @@ class MedicationScraper:
         self.cache_file = "scraping_cache.json"
         self.batch_size = 10
         
+        self.brand_extraction_patterns = [
+                    r'Brand name[s]?:\s*([^,\n\r]+)',
+        r'Brand:\s*([^,\n\r]+)',
+        r'<strong>Brand name[s]?:</strong>\s*([^<]+)',
+        r'<td[^>]*>Brand name[s]?:</td>\s*<td[^>]*>([^<]+)</td>',
+        r'<span[^>]*>Brand name[s]?:</span>\s*([^<]+)',
+        r'<div[^>]*>Brand name[s]?:</div>\s*([^<]+)',
+        r'Also known as:\s*([^,\n\r]+)',
+        r'Alternative names?:\s*([^,\n\r]+)',
+        r'Common brands?:\s*([^,\n\r]+)',
+        r'Brand names?:\s*([^,\n\r]+)',
+        r'Available as:\s*([^,\n\r]+)',
+        r'Marketed as:\s*([^,\n\r]+)',
+        r'Sold as:\s*([^,\n\r]+)',
+        r'Known as:\s*([^,\n\r]+)',
+        r'Proprietary name[s]?:\s*([^,\n\r]+)',
+        r'Trade name[s]?:\s*([^,\n\r]+)',
+        r'<h[1-6][^>]*>([^<]*?(?:brand|Brand)[^<]*)</h[1-6]>',
+        r'<div[^>]*class="[^"]*brand[^"]*"[^>]*>([^<]+)</div>',
+        r'<span[^>]*class="[^"]*brand[^"]*"[^>]*>([^<]+)</span>',
+        r'<tr[^>]*>.*?Brand.*?</tr>',
+        r'<td[^>]*>Brand</td>\s*<td[^>]*>([^<]+)</td>',
+        r'<li[^>]*>([^<]*?(?:brand|Brand)[^<]*)</li>',
+        r'<ul[^>]*>.*?Brand.*?</ul>',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:tablet|capsule|pill|injection|cream|ointment)',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:mg|mcg|g|ml|IU)',
+        r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:oral|topical|inhalation)',
+        ]
+        
+        # Comprehensive brand database
+        self.comprehensive_brands = {
+            'Pain & Fever': [
+                'Bayer', 'Ecotrin', 'St. Joseph', 'Bufferin', 'Anacin', 'Excedrin',
+                'Advil', 'Motrin', 'Aleve', 'Tylenol', 'Panadol', 'Calpol',
+                'Nuprin', 'Brufen', 'Nurofen', 'Feldene', 'Voltaren', 'Celebrex',
+                'Vioxx', 'Bextra', 'Diclofenac', 'Ibuprofen', 'Naproxen', 'Aspirin'
+            ],
+            'Heart & Blood Pressure': [
+                'Lipitor', 'Zocor', 'Crestor', 'Plavix', 'Brilinta', 'Effient',
+                'Eliquis', 'Xarelto', 'Pradaxa', 'Warfarin', 'Coumadin', 'Heparin',
+                'Lovenox', 'Fragmin', 'Arixtra', 'Metformin', 'Glucophage', 'Januvia',
+                'Invokana', 'Farxiga', 'Jardiance', 'Victoza', 'Trulicity', 'Ozempic',
+                'Wegovy', 'Lantus', 'NovoLog', 'Humalog', 'Tresiba', 'Toujeo'
+            ],
+            'Mental Health': [
+                'Zoloft', 'Prozac', 'Celexa', 'Lexapro', 'Paxil', 'Wellbutrin',
+                'Xanax', 'Valium', 'Ativan', 'Klonopin', 'Ambien', 'Lunesta',
+                'Sonata', 'Rozerem', 'Belsomra', 'Dayvigo', 'Quviviq', 'Abilify',
+                'Seroquel', 'Risperdal', 'Zyprexa', 'Geodon', 'Latuda', 'Vraylar'
+            ],
+            'Respiratory': [
+                'Albuterol', 'Proventil', 'Ventolin', 'ProAir', 'Xopenex', 'Proventil',
+                'Fluticasone', 'Flonase', 'Nasonex', 'Rhinocort', 'Nasacort', 'Qnasl',
+                'Montelukast', 'Singulair', 'Zafirlukast', 'Accolate', 'Zileuton',
+                'Ipratropium', 'Atrovent', 'Tiotropium', 'Spiriva', 'Umeclidinium'
+            ],
+            'Gastrointestinal': [
+                'Zantac', 'Prilosec', 'Nexium', 'Prevacid', 'Aciphex', 'Dexilant',
+                'Omeprazole', 'Esomeprazole', 'Pantoprazole', 'Lansoprazole', 'Rabeprazole',
+                'Pepcid', 'Tagamet', 'Axid', 'Carafate', 'Reglan', 'Zofran'
+            ],
+            'Diabetes': [
+                'Glucophage', 'Metformin', 'Januvia', 'Invokana', 'Farxiga', 'Jardiance',
+                'Victoza', 'Trulicity', 'Ozempic', 'Wegovy', 'Lantus', 'NovoLog',
+                'Humalog', 'Tresiba', 'Toujeo', 'Levemir', 'Toujeo', 'Basaglar'
+            ],
+            'Cholesterol': [
+                'Lipitor', 'Zocor', 'Crestor', 'Pravachol', 'Lescol', 'Mevacor',
+                'Livalo', 'Zetia', 'Vytorin', 'Repatha', 'Praluent', 'Nexletol'
+            ],
+            'Antibiotics': [
+                'Amoxicillin', 'Augmentin', 'Zithromax', 'Biaxin', 'Cipro', 'Levaquin',
+                'Keflex', 'Doxycycline', 'Minocycline', 'Tetracycline', 'Bactrim', 'Septra'
+            ],
+            'Allergies': [
+                'Claritin', 'Zyrtec', 'Allegra', 'Xyzal', 'Clarinex', 'Claritin-D',
+                'Zyrtec-D', 'Allegra-D', 'Benadryl', 'Chlor-Trimeton', 'Tavist', 'Seldane'
+            ]
+        }
+        
+        # Flatten the comprehensive brands list for easier searching
+        self.all_brands = []
+        for category, brands in self.comprehensive_brands.items():
+            self.all_brands.extend(brands)
+    
+    def print_header(self, title, subtitle=""):
+        """Print a styled header with modern visual design"""
+        print(f"\n{Fore.GREEN}{'═'*70}")
+        print(f"{Fore.WHITE}{Style.BRIGHT}{title:^70}")
+        if subtitle:
+            print(f"{Fore.CYAN}{subtitle:^70}")
+        print(f"{Fore.GREEN}{'═'*70}{Style.RESET_ALL}")
+    
+    def print_section(self, title):
+        """Print a section header with modern styling"""
+        print(f"\n{Fore.BLUE}{Style.BRIGHT}▶ {title}")
+        print(f"{Fore.BLUE}{'─' * (len(title) + 2)}{Style.RESET_ALL}")
+    
+    def print_success(self, message):
+        """Print a success message with green styling"""
+        print(f"{Fore.GREEN}✅ {message}{Style.RESET_ALL}")
+    
+    def print_error(self, message):
+        """Print an error message with red styling"""
+        print(f"{Fore.RED}❌ {message}{Style.RESET_ALL}")
+    
+    def print_warning(self, message):
+        """Print a warning message with yellow styling"""
+        print(f"{Fore.YELLOW}⚠️ {message}{Style.RESET_ALL}")
+    
+    def print_info(self, message):
+        """Print an info message with blue styling"""
+        print(f"{Fore.CYAN}ℹ️ {message}{Style.RESET_ALL}")
+    
+    def print_progress(self, current, total, description=""):
+        """Print a progress bar with modern styling"""
+        percentage = (current / total) * 100
+        bar_length = 40
+        filled_length = int(bar_length * current // total)
+        bar = '█' * filled_length + '░' * (bar_length - filled_length)
+        
+        if description:
+            print(f"\r{Fore.MAGENTA}{description}: {bar} {percentage:5.1f}% ({current}/{total})", end='', flush=True)
+        else:
+            print(f"\r{Fore.MAGENTA}Progress: {bar} {percentage:5.1f}% ({current}/{total})", end='', flush=True)
+        
+        if current == total:
+            print()  # New line when complete
+    
+    def print_brand_extraction_summary(self, data):
+        """Print a beautiful summary of brand extraction results"""
+        total_medications = len(data)
+        brand_names_found = sum(1 for d in data.values() if d['brand_name'] != 'Not found')
+        multiple_brands = sum(1 for d in data.values() if '|' in str(d['brand_name']))
+        generic_found = sum(1 for d in data.values() if 'Generic' in str(d['brand_name']))
+        
+        print(f"\n{Fore.CYAN}{'═'*70}")
+        print(f"{Fore.WHITE}{Style.BRIGHT}{'BRAND EXTRACTION SUMMARY':^70}")
+        print(f"{Fore.CYAN}{'═'*70}")
+        
+        print(f"{Fore.GREEN}📊 Total Medications Analyzed: {total_medications}")
+        print(f"{Fore.GREEN}✅ Brand Names Found: {brand_names_found} ({brand_names_found/total_medications*100:.1f}%)")
+        print(f"{Fore.BLUE}🔗 Multiple Brands Identified: {multiple_brands}")
+        print(f"{Fore.YELLOW}💊 Generic Medications: {generic_found}")
+        
+        # Show examples of multiple brands
+        if multiple_brands > 0:
+            print(f"\n{Fore.CYAN}🔗 Examples of Multiple Brand Names:")
+            count = 0
+            for medication, info in data.items():
+                if '|' in str(info['brand_name']) and count < 5:
+                    brands = info['brand_name'].split(' | ')
+                    print(f"  {Fore.WHITE}{medication}: {Fore.GREEN}{', '.join(brands[:3])}")
+                    count += 1
+        
+        print(f"{Fore.CYAN}{'═'*70}{Style.RESET_ALL}")
+    
+    def print_data_quality_metrics(self, data):
+        """Print comprehensive data quality metrics"""
+        total = len(data)
+        
+        # Calculate metrics
+        dosage_found = sum(1 for d in data.values() if d['dosage'] != 'Not found')
+        how_to_take_found = sum(1 for d in data.values() if d['how_to_take'] != 'Not found')
+        when_to_take_found = sum(1 for d in data.values() if d['when_to_take'] != 'Not found')
+        
+        print(f"\n{Fore.MAGENTA}{'═'*70}")
+        print(f"{Fore.WHITE}{Style.BRIGHT}{'DATA QUALITY METRICS':^70}")
+        print(f"{Fore.MAGENTA}{'═'*70}")
+        
+        print(f"{Fore.GREEN}📊 Dosage Information: {dosage_found}/{total} ({dosage_found/total*100:.1f}%)")
+        print(f"{Fore.BLUE}📋 How to Take: {how_to_take_found}/{total} ({how_to_take_found/total*100:.1f}%)")
+        print(f"{Fore.YELLOW}⏰ When to Take: {when_to_take_found}/{total} ({when_to_take_found/total*100:.1f}%)")
+        
+        # Quality score
+        quality_score = (dosage_found + how_to_take_found + when_to_take_found) / (total * 3) * 100
+        if quality_score >= 80:
+            quality_emoji = "🟢"
+            quality_color = Fore.GREEN
+        elif quality_score >= 60:
+            quality_emoji = "🟡"
+            quality_color = Fore.YELLOW
+        else:
+            quality_emoji = "🔴"
+            quality_color = Fore.RED
+        
+        print(f"{quality_color}{quality_emoji} Overall Data Quality: {quality_score:.1f}%{Style.RESET_ALL}")
+        print(f"{Fore.MAGENTA}{'═'*70}{Style.RESET_ALL}")
+    
     def setup_driver(self):
         chrome_options = Options()
         chrome_options.add_argument('--no-sandbox')
@@ -83,20 +280,19 @@ class MedicationScraper:
             json.dump(cache_data, f)
     
     def load_existing_data(self):
-        print("📊 LOADING EXISTING DATA")
-        print("=" * 40)
+        self.print_section("LOADING EXISTING DATA")
         
         pattern = "medication_*.xlsx"
         files = glob.glob(pattern)
         
         if not files:
-            print("❌ No existing medication files found")
-            print("🆕 A new Excel file will be created")
+            self.print_warning("No existing medication files found")
+            self.print_info("A new Excel file will be created")
             return {}, None
         
         files.sort(key=os.path.getmtime, reverse=True)
         latest_file = files[0]
-        print(f"📁 Most recent file found: {latest_file}")
+        self.print_success(f"Most recent file found: {latest_file}")
         
         try:
             df = pd.read_excel(latest_file)
@@ -112,21 +308,20 @@ class MedicationScraper:
                         'when_to_take': str(row['When to Take']) if pd.notna(row['When to Take']) else 'Not found'
                     }
             
-            print(f"✅ Loaded {len(existing_data)} existing medications")
+            self.print_success(f"Loaded {len(existing_data)} existing medications")
             return existing_data, latest_file
             
         except Exception as e:
-            print(f"❌ Error cargando datos existentes: {e}")
+            self.print_error(f"Error loading existing data: {e}")
             return {}, None
     
     def read_original_medications(self):
-        print("\n📖 READING MEDICATIONS FROM ORIGINAL EXCEL")
-        print("=" * 40)
+        self.print_section("READING MEDICATIONS FROM ORIGINAL EXCEL")
         
         try:
-            df = pd.read_excel('Analysis/main_diseases_analysis_final.xlsx')
+            df = pd.read_excel('../Analysis/main_diseases_analysis_final.xlsx')
             
-            print(f"📋 Available columns: {list(df.columns)}")
+            self.print_info(f"Available columns: {list(df.columns)}")
             
             medication_column = None
             
@@ -137,28 +332,28 @@ class MedicationScraper:
                     break
             
             if medication_column is None:
-                print("🔍 Searching in all Excel sheets...")
-                xl_file = pd.ExcelFile('Analysis/main_diseases_analysis_final.xlsx')
+                self.print_info("Searching in all Excel sheets...")
+                xl_file = pd.ExcelFile('../Analysis/main_diseases_analysis_final.xlsx')
                 
                 for sheet_name in xl_file.sheet_names:
-                    print(f"📄 Checking sheet: {sheet_name}")
-                    sheet_df = pd.read_excel('Analysis/main_diseases_analysis_final.xlsx', sheet_name=sheet_name)
+                    self.print_info(f"Checking sheet: {sheet_name}")
+                    sheet_df = pd.read_excel('../Analysis/main_diseases_analysis_final.xlsx', sheet_name=sheet_name)
                     
                     for col in sheet_df.columns:
                         col_str = str(col).lower()
                         if 'unique medications' in col_str or 'all unique' in col_str or 'medication' in col_str:
                             medication_column = col
-                            print(f"✅ Column found in sheet '{sheet_name}': {col}")
+                            self.print_success(f"Column found in sheet '{sheet_name}': {col}")
                             df = sheet_df
                             break
                     if medication_column:
                         break
             
             if medication_column is None:
-                print("❌ Medication column not found. Using the first column.")
+                self.print_warning("Medication column not found. Using the first column.")
                 medication_column = df.columns[0]
             
-            print(f"📋 Selected column: {medication_column}")
+            self.print_info(f"Selected column: {medication_column}")
             
             medications = []
             for _, row in df.iterrows():
@@ -166,16 +361,15 @@ class MedicationScraper:
                 if pd.notna(medication) and medication != 'nan':
                     medications.append(medication)
             
-            print(f"📊 Total medications in original Excel: {len(medications)}")
+            self.print_success(f"Total medications in original Excel: {len(medications)}")
             return medications
             
         except Exception as e:
-            print(f"❌ Error leyendo Excel original: {e}")
+            self.print_error(f"Error reading original Excel: {e}")
             return []
     
     def identify_missing_medications(self, original_medications):
-        print("\n🔍 IDENTIFYING MISSING MEDICATIONS")
-        print("=" * 40)
+        self.print_section("IDENTIFYING MISSING MEDICATIONS")
         
         excluded_terms = [
             'ENHANCED SUMMARY', 'Total Unique Medications: 196', 
@@ -194,22 +388,22 @@ class MedicationScraper:
             if is_valid and len(medication.strip()) > 2:
                 valid_original_medications.append(medication)
         
-        print(f"📊 Valid medications from original: {len(valid_original_medications)}")
+        self.print_success(f"Valid medications from original: {len(valid_original_medications)}")
         
         missing_medications = []
         for medication in valid_original_medications:
             if medication not in self.existing_data:
                 missing_medications.append(medication)
         
-        print(f"🆕 Missing medications: {len(missing_medications)}")
-        print(f"✅ Already existing medications: {len(valid_original_medications) - len(missing_medications)}")
+        self.print_info(f"Missing medications: {len(missing_medications)}")
+        self.print_success(f"Already existing medications: {len(valid_original_medications) - len(missing_medications)}")
         
         if missing_medications:
-            print("\n📋 Missing medications:")
+            self.print_section("MISSING MEDICATIONS LIST")
             for i, med in enumerate(missing_medications[:10], 1):
-                print(f"  {i}. {med}")
+                self.print_info(f"{i:2d}. {med}")
             if len(missing_medications) > 10:
-                print(f"  ... and {len(missing_medications) - 10} more")
+                self.print_info(f"... and {len(missing_medications) - 10} more")
         
         return missing_medications
     
@@ -279,7 +473,7 @@ class MedicationScraper:
             print(f"❌ Error searching for link: {e}")
             return None
     
-        def process_medication(self, medication_name):
+    def process_medication(self, medication_name):
         max_retries = 3
         for attempt in range(max_retries):
             try:
@@ -454,91 +648,142 @@ class MedicationScraper:
         }
     
     def extract_brand_name(self, page_source):
-        brand_patterns = [
-            r'Brand name[s]?:\s*([^,\n]+)',
-            r'Brand:\s*([^,\n]+)',
-            r'<strong>Brand name[s]?:</strong>\s*([^<]+)',
-            r'<td[^>]*>Brand name[s]?:</td>\s*<td[^>]*>([^<]+)</td>'
-        ]
+        """Enhanced brand name extraction with multiple strategies to capture ALL possible brands"""
+        all_brands = []
         
-        for pattern in brand_patterns:
-            match = re.search(pattern, page_source, re.IGNORECASE)
-            if match:
-                brand_name = self.clean_text(match.group(1))
+        # Strategy 1: Use comprehensive regex patterns for multiple brands
+        for pattern in self.brand_extraction_patterns:
+            matches = re.findall(pattern, page_source, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0]
+                brand_name = self.clean_text(match)
                 if brand_name and len(brand_name) < 100:
                     if not any(generic in brand_name.lower() for generic in ['generic', 'tablet', 'pill', 'capsule', 'liquid', 'injection']):
-                        return brand_name
+                        all_brands.append(brand_name)
         
-        common_brands = [
-            'Bayer', 'Ecotrin', 'St. Joseph', 'Bufferin', 'Anacin', 'Excedrin',
-            'Advil', 'Motrin', 'Aleve', 'Tylenol', 'Zantac', 'Prilosec',
-            'Lipitor', 'Zocor', 'Crestor', 'Plavix', 'Zoloft', 'Prozac',
-            'Xanax', 'Valium', 'Ativan', 'Klonopin', 'Ambien', 'Lunesta',
-            'Vicodin', 'Percocet', 'OxyContin', 'Morphine', 'Fentanyl',
-            'Adderall', 'Ritalin', 'Concerta', 'Vyvanse', 'Strattera',
-            'Abilify', 'Seroquel', 'Risperdal', 'Zyprexa', 'Geodon',
-            'Depakote', 'Lamictal', 'Tegretol', 'Trileptal', 'Keppra',
-            'Eliquis', 'Xarelto', 'Pradaxa', 'Warfarin', 'Heparin',
-            'Lovenox', 'Fragmin', 'Arixtra', 'Pradaxa', 'Xarelto',
-            'Metformin', 'Glucophage', 'Januvia', 'Invokana', 'Farxiga',
-            'Jardiance', 'Victoza', 'Trulicity', 'Ozempic', 'Wegovy',
-            'Lantus', 'NovoLog', 'Humalog', 'Tresiba', 'Toujeo',
-            'Lisinopril', 'Enalapril', 'Ramipril', 'Benazepril', 'Quinapril',
-            'Amlodipine', 'Norvasc', 'Diltiazem', 'Verapamil', 'Nifedipine',
-            'Metoprolol', 'Atenolol', 'Propranolol', 'Carvedilol', 'Nebivolol',
-            'Losartan', 'Valsartan', 'Candesartan', 'Irbesartan', 'Olmesartan',
-            'Furosemide', 'Lasix', 'Hydrochlorothiazide', 'HCTZ', 'Chlorthalidone',
-            'Omeprazole', 'Prilosec', 'Esomeprazole', 'Nexium', 'Pantoprazole',
-            'Lansoprazole', 'Prevacid', 'Rabeprazole', 'Aciphex', 'Dexilant',
-            'Simvastatin', 'Zocor', 'Atorvastatin', 'Lipitor', 'Rosuvastatin',
-            'Crestor', 'Pravastatin', 'Pravachol', 'Fluvastatin', 'Lescol',
-            'Albuterol', 'Proventil', 'Ventolin', 'ProAir', 'Xopenex',
-            'Fluticasone', 'Flonase', 'Nasonex', 'Rhinocort', 'Nasacort',
-            'Montelukast', 'Singulair', 'Zafirlukast', 'Accolate', 'Zileuton',
-            'Ipratropium', 'Atrovent', 'Tiotropium', 'Spiriva', 'Umeclidinium',
-            'Incruse', 'Vilanterol', 'Breo', 'Formoterol', 'Perforomist',
-            'Salmeterol', 'Serevent', 'Budesonide', 'Pulmicort', 'Ciclesonide',
-            'Alvesco', 'Mometasone', 'Asmanex', 'Cromolyn', 'Intal'
-        ]
-        
+        # Strategy 2: Search for known brands in comprehensive database
         page_lower = page_source.lower()
-        for brand in common_brands:
+        for brand in self.all_brands:
             if brand.lower() in page_lower:
                 brand_context = re.search(rf'\b{brand}\b', page_source, re.IGNORECASE)
                 if brand_context:
-                    return brand
+                    all_brands.append(brand)
         
-        alt_patterns = [
-            r'Also known as:\s*([^,\n]+)',
-            r'Alternative names?:\s*([^,\n]+)',
-            r'Common brands?:\s*([^,\n]+)'
+        # Strategy 3: Look for brand-like patterns in the page
+        brand_like_patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:tablet|capsule|pill|injection|cream|ointment|gel|patch|spray|drops)\b',
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:mg|mcg|g|ml|IU|units?)\b',
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:oral|topical|inhalation|subcutaneous|intramuscular|intravenous)\b',
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:solution|suspension|syrup|powder|granule)\b'
         ]
         
-        for pattern in alt_patterns:
+        for pattern in brand_like_patterns:
+            matches = re.findall(pattern, page_source)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0]
+                if match and len(match) > 2 and len(match) < 50:
+                    # Check if it looks like a brand name
+                    if (re.match(r'^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*$', match) and
+                        not any(generic in match.lower() for generic in ['generic', 'tablet', 'pill', 'capsule', 'liquid', 'injection', 'oral', 'topical'])):
+                        all_brands.append(match)
+        
+        # Strategy 4: Look for trademark symbols and registered marks
+        trademark_patterns = [
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s*[®™©]\b',
+            r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:trademark|brand|proprietary)\b'
+        ]
+        
+        for pattern in trademark_patterns:
             match = re.search(pattern, page_source, re.IGNORECASE)
             if match:
                 brand_name = self.clean_text(match.group(1))
-                if brand_name and len(brand_name) < 100:
-                    if not any(generic in brand_name.lower() for generic in ['generic', 'tablet', 'pill', 'capsule', 'liquid', 'injection']):
-                        return brand_name
+                if brand_name and len(brand_name) < 50:
+                    all_brands.append(brand_name)
         
-        generic_terms = ['aspirin', 'acetaminophen', 'ibuprofen', 'naproxen', 'metformin', 'lisinopril', 'amlodipine']
-        page_lower = page_source.lower()
+        # Strategy 5: Look for pharmaceutical company names
+        company_patterns = [
+            r'\b(Pfizer|Merck|Novartis|Roche|GlaxoSmithKline|GSK|Johnson\s+&\s+Johnson|J&J|AstraZeneca|Bristol-Myers\s+Squibb|BMS|Sanofi|Takeda|Eli\s+Lilly|Lilly|Amgen|Biogen|Gilead|Regeneron|Vertex)\b'
+        ]
+        
+        for pattern in company_patterns:
+            match = re.search(pattern, page_source, re.IGNORECASE)
+            if match:
+                all_brands.append(match.group(1))
+        
+        # Strategy 6: Look for "Also known as" and "Alternative names" sections
+        alternative_patterns = [
+            r'Also known as:\s*([^,\n\r]+)',
+            r'Alternative names?:\s*([^,\n\r]+)',
+            r'Common brands?:\s*([^,\n\r]+)',
+            r'Brand names?:\s*([^,\n\r]+)',
+            r'Available as:\s*([^,\n\r]+)',
+            r'Marketed as:\s*([^,\n\r]+)',
+            r'Sold as:\s*([^,\n\r]+)',
+            r'Known as:\s*([^,\n\r]+)',
+            r'Proprietary name[s]?:\s*([^,\n\r]+)',
+            r'Trade name[s]?:\s*([^,\n\r]+)'
+        ]
+        
+        for pattern in alternative_patterns:
+            match = re.search(pattern, page_source, re.IGNORECASE)
+            if match:
+                brands_text = self.clean_text(match.group(1))
+                # Split by common separators and clean each brand
+                for separator in [',', ';', 'and', '&', '/', '|']:
+                    if separator in brands_text:
+                        brand_parts = brands_text.split(separator)
+                        for part in brand_parts:
+                            cleaned_part = part.strip()
+                            if cleaned_part and len(cleaned_part) > 2 and len(cleaned_part) < 50:
+                                if not any(generic in cleaned_part.lower() for generic in ['generic', 'tablet', 'pill', 'capsule', 'liquid', 'injection']):
+                                    all_brands.append(cleaned_part)
+                        break
+                else:
+                    # No separators found, add the whole text
+                    if brands_text and len(brands_text) > 2 and len(brands_text) < 100:
+                        all_brands.append(brands_text)
+        
+        # Strategy 7: Check for generic terms
+        generic_terms = ['aspirin', 'acetaminophen', 'ibuprofen', 'naproxen', 'metformin', 'lisinopril', 'amlodipine', 'omeprazole', 'simvastatin']
         for generic in generic_terms:
             if generic in page_lower:
-                return "Generic"
+                all_brands.append("Generic")
+                break
+        
+        # Remove duplicates and clean up
+        unique_brands = []
+        seen = set()
+        for brand in all_brands:
+            cleaned_brand = brand.strip()
+            if cleaned_brand and cleaned_brand not in seen:
+                seen.add(cleaned_brand)
+                unique_brands.append(cleaned_brand)
+        
+        # Return all brands found, or "Not found" if none
+        if unique_brands:
+            if len(unique_brands) == 1:
+                return unique_brands[0]
+            else:
+                return " | ".join(unique_brands[:5])  # Limit to 5 brands to avoid overwhelming
         
         return "Not found"
     
     def extract_dosage(self, page_source):
-        """Extract dosage information from the page"""
+        """Extract ALL possible dosage forms from the page"""
+        all_dosage_forms = []
+        
         # Look for dosage information in specific sections first
         dosage_sections = [
             'dosage',
             'strength',
             'available as',
             'form',
-            'administration'
+            'administration',
+            'how supplied',
+            'product forms',
+            'presentation'
         ]
         
         page_lower = page_source.lower()
@@ -548,20 +793,40 @@ class MedicationScraper:
             if section in page_lower:
                 # Find the section and extract dosage info
                 section_start = page_lower.find(section)
-                section_end = min(section_start + 2000, len(page_lower))
+                section_end = min(section_start + 3000, len(page_lower))
                 section_text = page_source[section_start:section_end]
                 
                 # Look for dosage patterns in this section
-                dosage = self.find_dosage_in_text(section_text)
-                if dosage != "Not found":
-                    return dosage
+                dosage_forms = self.find_all_dosage_forms_in_text(section_text)
+                all_dosage_forms.extend(dosage_forms)
         
         # If not found in sections, search the entire page
-        return self.find_dosage_in_text(page_source)
+        if not all_dosage_forms:
+            all_dosage_forms = self.find_all_dosage_forms_in_text(page_source)
+        
+        # Remove duplicates and clean up
+        unique_dosage_forms = []
+        seen = set()
+        for form in all_dosage_forms:
+            cleaned_form = form.strip()
+            if cleaned_form and cleaned_form not in seen and len(cleaned_form) > 2:
+                seen.add(cleaned_form)
+                unique_dosage_forms.append(cleaned_form)
+        
+        # Return all dosage forms found, or "Not found" if none
+        if unique_dosage_forms:
+            if len(unique_dosage_forms) == 1:
+                return unique_dosage_forms[0]
+            else:
+                return " | ".join(unique_dosage_forms[:5])  # Limit to 5 forms
+        
+        return "Not found"
     
-    def find_dosage_in_text(self, text):
-        """Find dosage information in text - focusing on administration form"""
-        # Look for specific administration forms and types
+    def find_all_dosage_forms_in_text(self, text):
+        """Find ALL possible dosage forms in text"""
+        all_forms = []
+        
+        # Enhanced form patterns to catch multiple forms
         form_patterns = [
             # Oral forms
             r'(?:oral\s+)?(?:tablet|pill|capsule|liquid|suspension|syrup|solution|powder|granule)',
@@ -569,26 +834,34 @@ class MedicationScraper:
             r'(?:oral\s+)?(?:tablet|pill|capsule)(?:\s+extended\s+release)?',
             r'(?:oral\s+)?(?:liquid|suspension|syrup|solution)',
             r'(?:oral\s+)?(?:powder|granule|effervescent)',
+            r'(?:oral\s+)?(?:drops|spray|lozenge|gum)',
             
             # Injection forms
             r'(?:injection|injectable|subcutaneous|intramuscular|intravenous)',
-            r'(?:intravenous\s+solution|subcutaneous\s+injection)',
+            r'(?:intravenous\s+solution|subcutaneous\s+injection|intramuscular\s+injection)',
+            r'(?:prefilled\s+syringe|auto\s+injector|pen\s+injector)',
             
             # Inhalation forms
-            r'(?:inhalation|inhaler|aerosol|nebulizer)',
+            r'(?:inhalation|inhaler|aerosol|nebulizer|powder\s+inhaler|metered\s+dose\s+inhaler)',
+            r'(?:dry\s+powder\s+inhaler|soft\s+mist\s+inhaler)',
             
             # Topical forms
-            r'(?:topical|cream|ointment|gel|patch|lotion)',
+            r'(?:topical|cream|ointment|gel|patch|lotion|foam|spray|shampoo)',
+            r'(?:transdermal|dermal|cutaneous)',
             
             # Other forms
             r'(?:rectal\s+suppository|ophthalmic|otic|intranasal|nasal\s+spray)',
+            r'(?:vaginal|buccal|sublingual|intrauterine)',
+            r'(?:ophthalmic\s+drops|ophthalmic\s+ointment|ophthalmic\s+gel)',
+            r'(?:otic\s+drops|otic\s+suspension)',
             
             # Generic patterns
             r'(?:tablet|capsule|pill|liquid|suspension|syrup|solution|powder|granule)',
-            r'(?:injection|inhalation|topical|rectal|ophthalmic|otic|nasal)'
+            r'(?:injection|inhalation|topical|rectal|ophthalmic|otic|nasal)',
+            r'(?:drops|spray|lozenge|gum|suppository|implant|device)'
         ]
         
-        forms = []
+        # Look for specific dosage form mentions
         for pattern in form_patterns:
             matches = re.findall(pattern, text, re.IGNORECASE)
             for match in matches:
@@ -598,12 +871,48 @@ class MedicationScraper:
                 if cleaned and len(cleaned) > 2:
                     # Avoid false positives
                     if not any(exclude in cleaned.lower() for exclude in ['ear', 'eye', 'nose', 'mouth', 'skin', 'head', 'hand', 'foot']):
-                        forms.append(cleaned)
+                        standardized = self.standardize_administration_form(cleaned)
+                        if standardized not in all_forms:
+                            all_forms.append(standardized)
         
+        # Look for "Available as" or "Form" sections that list multiple forms
+        availability_patterns = [
+            r'Available as:\s*([^,\n\r]+)',
+            r'Form[s]?:\s*([^,\n\r]+)',
+            r'Presentation[s]?:\s*([^,\n\r]+)',
+            r'How supplied:\s*([^,\n\r]+)',
+            r'Product forms?:\s*([^,\n\r]+)'
+        ]
+        
+        for pattern in availability_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                forms_text = self.clean_text(match.group(1))
+                # Split by common separators and clean each form
+                for separator in [',', ';', 'and', '&', '/', '|']:
+                    if separator in forms_text:
+                        form_parts = forms_text.split(separator)
+                        for part in form_parts:
+                            cleaned_part = part.strip()
+                            if cleaned_part and len(cleaned_part) > 2:
+                                standardized = self.standardize_administration_form(cleaned_part)
+                                if standardized not in all_forms:
+                                    all_forms.append(standardized)
+                        break
+                else:
+                    # No separators found, add the whole text
+                    if forms_text and len(forms_text) > 2:
+                        standardized = self.standardize_administration_form(forms_text)
+                        if standardized not in all_forms:
+                            all_forms.append(standardized)
+        
+        return all_forms
+    
+    def find_dosage_in_text(self, text):
+        """Find dosage information in text - focusing on administration form (legacy method)"""
+        forms = self.find_all_dosage_forms_in_text(text)
         if forms:
-            # Standardize the form names
             return self.standardize_administration_form(forms[0])
-        
         return "Not found"
     
     def standardize_administration_form(self, form):
@@ -680,27 +989,54 @@ class MedicationScraper:
 
     
     def extract_how_to_take(self, page_source):
-        how_sections = [
+        all_instructions = []
+        
+        how_to_sections = [
             'how to take',
+            'how to use',
             'administration',
             'instructions',
             'directions',
-            'how to use'
+            'usage',
+            'method of use',
+            'patient instructions',
+            'dosing instructions',
+            'proper use'
         ]
         
         page_lower = page_source.lower()
         
-        for section in how_sections:
+        for section in how_to_sections:
             if section in page_lower:
                 section_start = page_lower.find(section)
-                section_end = min(section_start + 1500, len(page_lower))
+                section_end = min(section_start + 3000, len(page_lower))
                 section_text = page_source[section_start:section_end]
                 
-                how_to_take = self.find_how_to_take_in_text(section_text)
-                if how_to_take != "Not found":
-                    return how_to_take
+                instructions = self.find_all_how_to_take_in_text(section_text)
+                all_instructions.extend(instructions)
         
-        return self.find_how_to_take_in_text(page_source)
+        food_instructions = self.find_food_instructions(page_source)
+        if food_instructions:
+            all_instructions.extend(food_instructions)
+        
+        if not all_instructions:
+            all_instructions = self.find_all_how_to_take_in_text(page_source)
+        
+        unique_instructions = []
+        seen = set()
+        for instruction in all_instructions:
+            cleaned = instruction.strip()
+            if cleaned and cleaned not in seen and len(cleaned) > 3:
+                seen.add(cleaned)
+                unique_instructions.append(cleaned)
+        
+        if unique_instructions:
+            if len(unique_instructions) == 1:
+                return unique_instructions[0]
+            else:
+                return " | ".join(unique_instructions[:3])
+        
+        return "Not found"
     
     def find_how_to_take_in_text(self, text):
         how_patterns = [
@@ -1058,8 +1394,7 @@ class MedicationScraper:
             return "Not found"
     
     def update_excel(self, new_data, existing_file):
-        print("\n📊 UPDATING EXCEL")
-        print("=" * 40)
+        self.print_section("UPDATING EXCEL FILE")
         
         try:
             if existing_file:
@@ -1079,14 +1414,14 @@ class MedicationScraper:
                 updated_df = pd.concat([df, new_df], ignore_index=True)
                 updated_df.to_excel(existing_file, index=False)
                 
-                print(f"✅ Excel updated: {existing_file}")
-                print(f"📊 New medications added: {len(new_data)}")
-                print(f"📊 Total medications in file: {len(updated_df)}")
+                self.print_success(f"Excel updated: {existing_file}")
+                self.print_success(f"New medications added: {len(new_data)}")
+                self.print_success(f"Total medications in file: {len(updated_df)}")
                 
                 return existing_file
             else:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                new_filename = f"medication_data_{timestamp}.xlsx"
+                new_filename = f"../Analysis/medication_data_{timestamp}.xlsx"
                 
                 new_rows = []
                 for medication, data in new_data.items():
@@ -1101,28 +1436,29 @@ class MedicationScraper:
                 new_df = pd.DataFrame(new_rows)
                 new_df.to_excel(new_filename, index=False)
                 
-                print(f"✅ New Excel created: {new_filename}")
-                print(f"📊 Medications added: {len(new_data)}")
+                self.print_success(f"New Excel created: {new_filename}")
+                self.print_success(f"Medications added: {len(new_data)}")
                 
                 return new_filename
             
         except Exception as e:
-            print(f"❌ Error updating Excel: {e}")
+            self.print_error(f"Error updating Excel: {e}")
             return None
     
     def update_how_to_take_only(self, cache, existing_file):
-        print("🔧 UPDATING HOW TO TAKE COLUMN")
-        print("=" * 50)
+        self.print_section("UPDATING HOW TO TAKE COLUMN")
         
         try:
             df = pd.read_excel(existing_file)
-            print(f"📊 Total medications: {len(df)}")
+            self.print_success(f"Total medications: {len(df)}")
             
-            print("\n📈 CURRENT HOW TO TAKE STATISTICS:")
+            self.print_section("CURRENT HOW TO TAKE STATISTICS")
             how_to_take_counts = df['How to Take'].value_counts()
-            print(how_to_take_counts.head(10))
+            for pattern, count in how_to_take_counts.head(10).items():
+                percentage = (count / len(df)) * 100
+                self.print_info(f"{pattern}: {count} ({percentage:.1f}%)")
             
-            print("\n🔧 IMPROVING HOW TO TAKE COLUMN...")
+            self.print_section("IMPROVING HOW TO TAKE COLUMN")
             improved_count = 0
             
             for index, row in df.iterrows():
@@ -1132,23 +1468,25 @@ class MedicationScraper:
                     improved = self.simplify_instructions(original)
                     
                     if improved != original:
-                        print(f"✅ {medication}: '{original}' → '{improved}'")
+                        self.print_success(f"{medication}: '{original}' → '{improved}'")
                         df.at[index, 'How to Take'] = improved
                         improved_count += 1
             
-            print(f"\n📊 Improved {improved_count} entries")
+            self.print_success(f"Improved {improved_count} entries")
             
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            new_filename = f"medication_data_improved_{timestamp}.xlsx"
+            new_filename = f"../Analysis/medication_data_{timestamp}.xlsx"
             df.to_excel(new_filename, index=False)
             
-            print(f"✅ Improved file saved: {new_filename}")
+            self.print_success(f"Improved file saved: {new_filename}")
             
-            print("\n📈 NEW HOW TO TAKE STATISTICS:")
+            self.print_section("NEW HOW TO TAKE STATISTICS")
             new_how_to_take_counts = df['How to Take'].value_counts()
-            print(new_how_to_take_counts.head(10))
+            for pattern, count in new_how_to_take_counts.head(10).items():
+                percentage = (count / len(df)) * 100
+                self.print_info(f"{pattern}: {count} ({percentage:.1f}%)")
             
-            print("\n🎯 MOST COMMON PATTERNS:")
+            self.print_section("MOST COMMON PATTERNS")
             patterns = {
                 'With food': 0,
                 'With water': 0,
@@ -1168,14 +1506,39 @@ class MedicationScraper:
             for pattern, count in patterns.items():
                 if count > 0:
                     percentage = (count / len(df)) * 100
-                    print(f"  {pattern}: {count} ({percentage:.1f}%)")
+                    self.print_info(f"{pattern}: {count} ({percentage:.1f}%)")
                     
         except Exception as e:
-            print(f"❌ Error updating How to Take column: {e}")
+            self.print_error(f"Error updating How to Take column: {e}")
+    
+    def create_enhanced_professional_excel(self):
+        self.print_header("🎨 ENHANCED PROFESSIONAL EXCEL CREATOR", "Create Professional Excel with Enhanced Data")
+        
+        try:
+            reprocessed_file = self.enhance_existing_data()
+            if not reprocessed_file:
+                return
+            
+            df = pd.read_excel(reprocessed_file)
+            
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            excel_filename = f"../Analysis/medication_data_{timestamp}.xlsx"
+            
+            self.print_section("CREATING PROFESSIONAL EXCEL")
+            self.create_professional_excel(df, excel_filename)
+            
+            self.print_success(f"Enhanced professional Excel created: {excel_filename}")
+            self.print_info("Features: Professional styling, alternating row colors, statistics dashboard")
+            self.print_info("Enhanced data quality analysis and visual presentation")
+            
+            return excel_filename
+            
+        except Exception as e:
+            self.print_error(f"Error creating enhanced Excel: {e}")
+            return None
     
     def run(self):
-        print("🚀 STARTING INTELLIGENT SCRAPING")
-        print("=" * 50)
+        self.print_header("🚀 INTELLIGENT MEDICATION SCRAPING", "Enhanced Brand Name Extraction & Modern Visual Interface")
         
         try:
             self.existing_data, existing_file = self.load_existing_data()
@@ -1183,17 +1546,18 @@ class MedicationScraper:
             missing_medications = self.identify_missing_medications(original_medications)
             
             if missing_medications:
-                print(f"\n🚀 PROCESSING ALL {len(missing_medications)} MEDICATIONS")
-                print(f"📊 Total medications to process: {len(missing_medications)}")
+                self.print_section(f"PROCESSING {len(missing_medications)} MEDICATIONS")
+                self.print_info(f"Total medications to process: {len(missing_medications)}")
             
             cache = self.load_cache()
             
             if not missing_medications and cache:
-                print("\n✅ All medications already processed. Updating 'How to Take' column with improved cleaning...")
+                self.print_section("UPDATING EXISTING DATA")
+                self.print_success("All medications already processed. Updating 'How to Take' column with improved cleaning...")
                 self.update_how_to_take_only(cache, existing_file)
                 return
             elif not missing_medications:
-                print("\n✅ No missing medications. All medications are already in our results.")
+                self.print_success("No missing medications. All medications are already in our results.")
                 return
             
             cache = self.load_cache()
@@ -1202,21 +1566,20 @@ class MedicationScraper:
             scraped_data = {}
             total_missing = len(missing_medications)
             
-            print(f"\n📊 Processing {total_missing} missing medications in batches of {self.batch_size}...")
+            self.print_info(f"Processing {total_missing} missing medications in batches of {self.batch_size}...")
             
             for batch_start in range(0, total_missing, self.batch_size):
                 batch_end = min(batch_start + self.batch_size, total_missing)
                 batch_medications = missing_medications[batch_start:batch_end]
                 
-                print(f"\n🔄 BATCH {batch_start//self.batch_size + 1}: Processing medications {batch_start + 1}-{batch_end}")
-                print("=" * 60)
+                self.print_section(f"BATCH {batch_start//self.batch_size + 1}: Processing medications {batch_start + 1}-{batch_end}")
                 
                 for i, medication in enumerate(batch_medications, 1):
                     global_index = batch_start + i
-                    print(f"\n📊 Processing {global_index}/{total_missing}: {medication}")
+                    self.print_progress(global_index, total_missing, f"Processing {medication}")
                     
                     if medication in cache:
-                        print(f"✅ {medication}: Using cached data")
+                        self.print_success(f"{medication}: Using cached data")
                         scraped_data[medication] = cache[medication]
                         continue
                     
@@ -1225,27 +1588,21 @@ class MedicationScraper:
                         if result:
                             scraped_data[medication] = result
                             cache[medication] = result
-                            print(f"✅ {medication}: {result['brand_name']} | {result['dosage']} | {result['how_to_take']} | {result['when_to_take']}")
+                            self.print_success(f"{medication}: {result['brand_name']} | {result['dosage']} | {result['how_to_take']} | {result['when_to_take']}")
                         else:
-                            print(f"❌ {medication}: Could not process")
+                            self.print_error(f"{medication}: Could not process")
                     except Exception as e:
-                        print(f"❌ Error processing {medication}: {e}")
+                        self.print_error(f"Error processing {medication}: {e}")
                         time.sleep(1)
-                        if attempt == max_retries - 1:
-                            print(f"⚠️ Skipping {medication} after {max_retries} failed attempts")
-                            continue
-                        else:
-                            print(f"🔄 Retrying {medication}... (attempt {attempt + 2}/{max_retries})")
-                            time.sleep(2)
-                            continue
+                        continue
                 
-                print(f"\n🔄 Restarting driver after batch {batch_start//self.batch_size + 1}...")
+                self.print_info(f"Restarting driver after batch {batch_start//self.batch_size + 1}...")
                 
                 try:
                     self.restart_driver()
                 except Exception as e:
-                    print(f"⚠️ Error restarting driver: {e}")
-                    print("🔄 Attempting automatic restart...")
+                    self.print_warning(f"Error restarting driver: {e}")
+                    self.print_info("Attempting automatic restart...")
                     try:
                         if self.driver:
                             self.driver.quit()
@@ -1255,22 +1612,22 @@ class MedicationScraper:
                     try:
                         self.setup_driver()
                     except Exception as e2:
-                        print(f"❌ Critical error setting up driver: {e2}")
-                        print("🔄 Trying one more time...")
+                        self.print_error(f"Critical error setting up driver: {e2}")
+                        self.print_info("Trying one more time...")
                         time.sleep(5)
                         try:
                             self.setup_driver()
                         except Exception as e3:
-                            print(f"❌ Final error setting up driver: {e3}")
-                            print("🛑 Stopping script due to driver issues")
+                            self.print_error(f"Final error setting up driver: {e3}")
+                            self.print_error("Stopping script due to driver issues")
                             break
                 
                 if scraped_data:
                     cleaned_data = self.clean_and_format_data(scraped_data)
                     self.save_cache(cache)
-                    print(f"💾 Progress saved after batch {batch_start//self.batch_size + 1}")
+                    self.print_success(f"Progress saved after batch {batch_start//self.batch_size + 1}")
                 
-                print("🤖 Batch completed. Continuing automatically...")
+                self.print_info("Batch completed. Continuing automatically...")
                 time.sleep(1)
             
             if self.driver:
@@ -1281,23 +1638,633 @@ class MedicationScraper:
                 self.save_cache(cache)
                 updated_file = self.update_excel(cleaned_data, existing_file)
                 
-                print(f"\n🎉 SCRAPING COMPLETED!")
-                print(f"📁 File updated: {updated_file}")
-                print(f"📊 Medications processed: {len(scraped_data)}")
+                self.print_header("🎉 SCRAPING COMPLETED!", "Enhanced Multi-Brand Extraction Results")
+                self.print_success(f"File updated: {updated_file}")
+                self.print_success(f"Medications processed: {len(scraped_data)}")
                 
-                when_to_take_found = sum(1 for data in cleaned_data.values() if data['when_to_take'] != 'Not found')
-                print(f"📈 When to Take found: {when_to_take_found} ({when_to_take_found/len(cleaned_data)*100:.1f}%)")
+                # Enhanced brand extraction summary
+                self.print_brand_extraction_summary(cleaned_data)
+                
+                # Data quality metrics
+                self.print_data_quality_metrics(cleaned_data)
+                
+                # Show brand name categories found
+                self.print_section("BRAND NAME CATEGORIES EXTRACTED")
+                brand_categories = {}
+                for data in cleaned_data.values():
+                    if data['brand_name'] != 'Not found':
+                        # Handle multiple brands
+                        if '|' in str(data['brand_name']):
+                            brands = data['brand_name'].split(' | ')
+                            for brand in brands:
+                                for category, category_brands in self.comprehensive_brands.items():
+                                    if brand in category_brands:
+                                        brand_categories[category] = brand_categories.get(category, 0) + 1
+                                        break
+                        else:
+                            for category, brands in self.comprehensive_brands.items():
+                                if data['brand_name'] in brands:
+                                    brand_categories[category] = brand_categories.get(category, 0) + 1
+                                    break
+                
+                for category, count in sorted(brand_categories.items(), key=lambda x: x[1], reverse=True):
+                    self.print_info(f"{category}: {count} brands")
+                
+                # Enhanced brand analysis
+                self.analyze_brand_extraction_results(cleaned_data)
             else:
-                print("\n❌ No new medications processed")
+                self.print_warning("No new medications processed")
             
         except Exception as e:
-            print(f"❌ Error in scraping: {e}")
+            self.print_error(f"Error in scraping: {e}")
             if self.driver:
                 self.driver.quit()
+    
+    def analyze_brand_extraction_results(self, data):
+        """Analyze and display detailed brand extraction results"""
+        self.print_section("DETAILED BRAND EXTRACTION ANALYSIS")
+        
+        total_medications = len(data)
+        brand_names_found = sum(1 for d in data.values() if d['brand_name'] != 'Not found')
+        generic_found = sum(1 for d in data.values() if d['brand_name'] == 'Generic')
+        not_found = sum(1 for d in data.values() if d['brand_name'] == 'Not found')
+        
+        # Success rates
+        brand_success_rate = (brand_names_found / total_medications) * 100
+        generic_success_rate = (generic_found / total_medications) * 100
+        overall_success_rate = ((brand_names_found + generic_found) / total_medications) * 100
+        
+        self.print_success(f"Overall Brand Extraction Success: {overall_success_rate:.1f}%")
+        self.print_info(f"Specific Brand Names: {brand_names_found} ({brand_success_rate:.1f}%)")
+        self.print_info(f"Generic Identifications: {generic_found} ({generic_success_rate:.1f}%)")
+        self.print_warning(f"Not Found: {not_found} ({not_found/total_medications*100:.1f}%)")
+        
+        # Top extracted brands
+        brand_counts = {}
+        for d in data.values():
+            if d['brand_name'] not in ['Not found', 'Generic']:
+                brand_counts[d['brand_name']] = brand_counts.get(d['brand_name'], 0) + 1
+        
+        if brand_counts:
+            self.print_section("TOP EXTRACTED BRANDS")
+            sorted_brands = sorted(brand_counts.items(), key=lambda x: x[1], reverse=True)
+            for brand, count in sorted_brands[:10]:
+                self.print_info(f"{brand}: {count} occurrences")
+        
+        # Category distribution
+        self.print_section("BRAND CATEGORY DISTRIBUTION")
+        category_counts = {}
+        for d in data.values():
+            if d['brand_name'] != 'Not found':
+                for category, brands in self.comprehensive_brands.items():
+                    if d['brand_name'] in brands:
+                        category_counts[category] = category_counts.get(category, 0) + 1
+                        break
+        
+        for category, count in sorted(category_counts.items(), key=lambda x: x[1], reverse=True):
+            percentage = (count / brand_names_found) * 100 if brand_names_found > 0 else 0
+            self.print_info(f"{category}: {count} brands ({percentage:.1f}%)")
+        
+        # Quality metrics
+        self.print_section("DATA QUALITY METRICS")
+        dosage_found = sum(1 for d in data.values() if d['dosage'] != 'Not found')
+        how_to_take_found = sum(1 for d in data.values() if d['how_to_take'] != 'Not found')
+        when_to_take_found = sum(1 for d in data.values() if d['when_to_take'] != 'Not found')
+        
+        self.print_info(f"Dosage Information: {dosage_found} ({dosage_found/total_medications*100:.1f}%)")
+        self.print_info(f"How to Take: {how_to_take_found} ({how_to_take_found/total_medications*100:.1f}%)")
+        self.print_info(f"When to Take: {when_to_take_found} ({when_to_take_found/total_medications*100:.1f}%)")
+        
+        # Recommendations
+        self.print_section("IMPROVEMENT RECOMMENDATIONS")
+        if brand_success_rate < 70:
+            self.print_warning("Brand extraction success rate below 70%. Consider:")
+            self.print_info("  - Adding more brand patterns to extraction")
+            self.print_info("  - Expanding the comprehensive brand database")
+            self.print_info("  - Reviewing failed extractions for patterns")
+        
+        if not_found > total_medications * 0.3:
+            self.print_warning("High number of 'Not found' results. Consider:")
+            self.print_info("  - Manual review of failed extractions")
+            self.print_info("  - Adding medication-specific extraction rules")
+            self.print_info("  - Checking source data quality")
+        
+        self.print_success("Brand extraction analysis complete!")
+    
+    def create_professional_excel(self, data, filename):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Medication Analysis"
+        
+        colors = {
+            'header_bg': '1E3C72',
+            'header_text': 'FFFFFF',
+            'subheader_bg': '2A5298',
+            'subheader_text': 'FFFFFF',
+            'stats_bg': 'F8F9FA',
+            'stats_border': 'E9ECEF',
+            'row_alt1': 'F8F9FA',
+            'row_alt2': 'FFFFFF',
+            'success_green': '28A745',
+            'info_blue': '2A5298',
+            'warning_yellow': 'FFC107',
+        }
+        
+        header_style = NamedStyle(name="header_style")
+        header_style.font = Font(name='Arial', size=14, bold=True, color=colors['header_text'])
+        header_style.fill = PatternFill(start_color=colors['header_bg'], end_color=colors['header_bg'], fill_type='solid')
+        header_style.alignment = Alignment(horizontal='center', vertical='center')
+        header_style.border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        subheader_style = NamedStyle(name="subheader_style")
+        subheader_style.font = Font(name='Arial', size=12, bold=True, color=colors['subheader_text'])
+        subheader_style.fill = PatternFill(start_color=colors['subheader_bg'], end_color=colors['subheader_bg'], fill_type='solid')
+        subheader_style.alignment = Alignment(horizontal='center', vertical='center')
+        subheader_style.border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        ws.merge_cells('A1:E1')
+        ws['A1'] = 'MEDICATION COMPREHENSIVE ANALYSIS'
+        ws['A1'].style = header_style
+        ws.row_dimensions[1].height = 40
+        
+        ws.merge_cells('A2:E2')
+        ws['A2'] = 'Enhanced Multi-Brand & Multi-Dosage Form Extraction'
+        ws['A2'].style = subheader_style
+        ws.row_dimensions[2].height = 30
+        
+        stats_start_row = 4
+        ws.merge_cells(f'A{stats_start_row}:E{stats_start_row}')
+        ws[f'A{stats_start_row}'] = '📊 ANALYSIS STATISTICS'
+        ws[f'A{stats_start_row}'].font = Font(name='Arial', size=12, bold=True)
+        ws[f'A{stats_start_row}'].alignment = Alignment(horizontal='center')
+        ws.row_dimensions[stats_start_row].height = 25
+        
+        total_medications = len(data)
+        brand_names_found = sum(1 for d in data['Brand Names'] if d != 'Not found')
+        multiple_brands = sum(1 for d in data['Brand Names'] if '|' in str(d))
+        dosage_forms_found = sum(1 for d in data['Dosage Forms'] if d != 'Not found')
+        multiple_dosage_forms = sum(1 for d in data['Dosage Forms'] if '|' in str(d))
+        how_to_take_found = sum(1 for d in data['How to Take'] if d != 'Not found')
+        when_to_take_found = sum(1 for d in data['When to Take'] if d != 'Not found')
+        
+        stats_data = [
+            ['Total Medications', total_medications, 'Brand Names Found', brand_names_found],
+            ['Multiple Brands', multiple_brands, 'Dosage Forms Found', dosage_forms_found],
+            ['Multiple Dosage Forms', multiple_dosage_forms, 'How to Take Found', how_to_take_found],
+            ['When to Take Found', when_to_take_found, 'Success Rate', f"{(brand_names_found/total_medications*100):.1f}%"]
+        ]
+        
+        for i, row_data in enumerate(stats_data):
+            row_num = stats_start_row + 1 + i
+            for j, value in enumerate(row_data):
+                col = chr(ord('A') + j)
+                cell = ws[f'{col}{row_num}']
+                cell.value = value
+                
+                if j % 2 == 0:
+                    cell.font = Font(name='Arial', size=10, bold=True)
+                    cell.fill = PatternFill(start_color=colors['stats_bg'], end_color=colors['stats_bg'], fill_type='solid')
+                else:
+                    cell.font = Font(name='Arial', size=10)
+                    cell.fill = PatternFill(start_color=colors['stats_bg'], end_color=colors['stats_bg'], fill_type='solid')
+                
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = Border(
+                    left=Side(style='thin', color=colors['stats_border']),
+                    right=Side(style='thin', color=colors['stats_border']),
+                    top=Side(style='thin', color=colors['stats_border']),
+                    bottom=Side(style='thin', color=colors['stats_border'])
+                )
+        
+        table_start_row = stats_start_row + 6
+        ws.merge_cells(f'A{table_start_row}:E{table_start_row}')
+        ws[f'A{table_start_row}'] = '📋 MEDICATION DETAILS'
+        ws[f'A{table_start_row}'].font = Font(name='Arial', size=12, bold=True)
+        ws[f'A{table_start_row}'].alignment = Alignment(horizontal='center')
+        ws.row_dimensions[table_start_row].height = 25
+        
+        headers = ['Medication Name', 'Brand Names', 'Dosage Forms', 'How to Take', 'When to Take']
+        header_row = table_start_row + 1
+        
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=header_row, column=col)
+            cell.value = header
+            cell.style = subheader_style
+            ws.column_dimensions[chr(ord('A') + col - 1)].width = 25
+        
+        for i, (_, row) in enumerate(data.iterrows()):
+            row_num = header_row + 1 + i
+            
+            if i % 2 == 0:
+                row_color = colors['row_alt1']
+            else:
+                row_color = colors['row_alt2']
+            
+            for col, value in enumerate(row, 1):
+                cell = ws.cell(row=row_num, column=col)
+                cell.value = value
+                
+                cell.fill = PatternFill(start_color=row_color, end_color=row_color, fill_type='solid')
+                cell.font = Font(name='Arial', size=10)
+                cell.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
+                
+                cell.border = Border(
+                    left=Side(style='thin', color=colors['stats_border']),
+                    right=Side(style='thin', color=colors['stats_border']),
+                    top=Side(style='thin', color=colors['stats_border']),
+                    bottom=Side(style='thin', color=colors['stats_border'])
+                )
+                
+                if col == 2 and '|' in str(value):
+                    cell.font = Font(name='Arial', size=10, bold=True, color=colors['info_blue'])
+                elif col == 3 and '|' in str(value):
+                    cell.font = Font(name='Arial', size=10, bold=True, color=colors['success_green'])
+                elif 'Generic' in str(value):
+                    cell.font = Font(name='Arial', size=10, italic=True, color='6C757D')
+        
+        summary_start_row = header_row + len(data) + 3
+        ws.merge_cells(f'A{summary_start_row}:E{summary_start_row}')
+        ws[f'A{summary_start_row}'] = '📈 DATA QUALITY SUMMARY'
+        ws[f'A{summary_start_row}'].font = Font(name='Arial', size=12, bold=True)
+        ws[f'A{summary_start_row}'].alignment = Alignment(horizontal='center')
+        ws.row_dimensions[summary_start_row].height = 25
+        
+        quality_score = (brand_names_found + dosage_forms_found + how_to_take_found + when_to_take_found) / (total_medications * 4) * 100
+        
+        if quality_score >= 80:
+            quality_emoji = "🟢"
+            quality_color = colors['success_green']
+        elif quality_score >= 60:
+            quality_emoji = "🟡"
+            quality_color = colors['warning_yellow']
+        else:
+            quality_emoji = "🔴"
+            quality_color = 'DC3545'
+        
+        quality_data = [
+            ['Brand Names', f"{brand_names_found}/{total_medications}", f"{(brand_names_found/total_medications*100):.1f}%"],
+            ['Dosage Forms', f"{dosage_forms_found}/{total_medications}", f"{(dosage_forms_found/total_medications*100):.1f}%"],
+            ['How to Take', f"{how_to_take_found}/{total_medications}", f"{(how_to_take_found/total_medications*100):.1f}%"],
+            ['When to Take', f"{when_to_take_found}/{total_medications}", f"{(when_to_take_found/total_medications*100):.1f}%"],
+            ['Overall Quality', f"{quality_score:.1f}%", quality_emoji]
+        ]
+        
+        for i, row_data in enumerate(quality_data):
+            row_num = summary_start_row + 1 + i
+            for j, value in enumerate(row_data):
+                col = chr(ord('A') + j)
+                cell = ws[f'{col}{row_num}']
+                cell.value = value
+                
+                if j == 0:
+                    cell.font = Font(name='Arial', size=10, bold=True)
+                    cell.fill = PatternFill(start_color=colors['stats_bg'], end_color=colors['stats_bg'], fill_type='solid')
+                elif j == 2 and i == 4:
+                    cell.font = Font(name='Arial', size=12, bold=True, color=quality_color)
+                    cell.fill = PatternFill(start_color=colors['stats_bg'], end_color=colors['stats_bg'], fill_type='solid')
+                else:
+                    cell.font = Font(name='Arial', size=10)
+                    cell.fill = PatternFill(start_color=colors['stats_bg'], end_color=colors['stats_bg'], fill_type='solid')
+                
+                cell.alignment = Alignment(horizontal='center', vertical='center')
+                cell.border = Border(
+                    left=Side(style='thin', color=colors['stats_border']),
+                    right=Side(style='thin', color=colors['stats_border']),
+                    top=Side(style='thin', color=colors['stats_border']),
+                    bottom=Side(style='thin', color=colors['stats_border'])
+                )
+        
+        wb.save(filename)
+        return filename
+    
+    def enhance_existing_data(self):
+        files = [f for f in os.listdir('../Analysis') if f.startswith('medication_data_') and f.endswith('.xlsx')]
+        
+        if not files:
+            self.print_error("No medication data files found in Analysis directory!")
+            return
+        
+        files.sort(key=lambda x: os.path.getmtime(os.path.join('../Analysis', x)), reverse=True)
+        latest_file = files[0]
+        self.print_success(f"Processing: {latest_file}")
+        
+        df = pd.read_excel(f'../Analysis/{latest_file}')
+        self.print_info(f"Loaded {len(df)} medications")
+        
+        enhanced_data = []
+        dosage_enhanced = 0
+        how_to_take_enhanced = 0
+        
+        for index, row in df.iterrows():
+            medication = row['Name']
+            brand_name = str(row['Brand Name'])
+            current_dosage = str(row['Dosage'])
+            current_how_to_take = str(row['How to Take'])
+            
+            if current_dosage == 'nan':
+                current_dosage = 'Not found'
+            if current_how_to_take == 'nan':
+                current_how_to_take = 'Not found'
+            
+            enhanced_dosage = current_dosage
+            if current_dosage != 'Not found' and '|' not in current_dosage:
+                additional_forms = self.find_additional_dosage_forms(medication, current_dosage)
+                if additional_forms:
+                    enhanced_dosage = f"{current_dosage} | {' | '.join(additional_forms)}"
+                    dosage_enhanced += 1
+                    self.print_success(f"{medication}: '{current_dosage}' → '{enhanced_dosage}'")
+            
+            enhanced_how_to_take = current_how_to_take
+            if current_how_to_take == 'Not found':
+                extracted_instructions = self.extract_how_to_take_from_context(medication, enhanced_dosage)
+                if extracted_instructions:
+                    enhanced_how_to_take = extracted_instructions
+                    how_to_take_enhanced += 1
+                    self.print_success(f"{medication}: 'Not found' → '{enhanced_how_to_take}'")
+            
+            enhanced_data.append({
+                'Medication Name': medication,
+                'Brand Names': brand_name,
+                'Dosage Forms': enhanced_dosage,
+                'How to Take': enhanced_how_to_take,
+                'When to Take': str(row['When to Take'])
+            })
+        
+        enhanced_df = pd.DataFrame(enhanced_data)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        table_filename = f"../Analysis/medication_data_{timestamp}.xlsx"
+        enhanced_df.to_excel(table_filename, index=False)
+        
+        self.print_success(f"Enhanced data saved: {table_filename}")
+        
+        self.generate_reprocessing_statistics(enhanced_df, dosage_enhanced, how_to_take_enhanced)
+        
+        return table_filename
+    
+    def find_additional_dosage_forms(self, medication_name, current_dosage):
+        additional_forms = []
+        
+        medication_patterns = {
+            'aspirin': ['Oral tablet', 'Chewable tablet', 'Oral liquid', 'Rectal suppository'],
+            'acetaminophen': ['Oral tablet', 'Oral liquid', 'Oral suspension', 'Rectal suppository'],
+            'ibuprofen': ['Oral tablet', 'Oral liquid', 'Oral suspension', 'Topical gel'],
+            'metformin': ['Oral tablet', 'Oral solution', 'Oral suspension'],
+            'lisinopril': ['Oral tablet', 'Oral solution'],
+            'amlodipine': ['Oral tablet', 'Oral suspension'],
+            'albuterol': ['Inhalation aerosol', 'Inhalation solution', 'Oral tablet', 'Oral syrup'],
+            'fluticasone': ['Nasal spray', 'Inhalation aerosol', 'Topical cream', 'Topical ointment'],
+            'omeprazole': ['Oral capsule', 'Oral tablet', 'Oral suspension'],
+            'simvastatin': ['Oral tablet', 'Oral suspension'],
+            'amoxicillin': ['Oral capsule', 'Oral tablet', 'Oral suspension', 'Oral liquid'],
+            'prednisone': ['Oral tablet', 'Oral solution', 'Oral suspension'],
+            'furosemide': ['Oral tablet', 'Oral solution', 'Injection'],
+            'hydrochlorothiazide': ['Oral tablet', 'Oral capsule', 'Oral solution'],
+            'atenolol': ['Oral tablet', 'Oral solution'],
+            'carvedilol': ['Oral tablet', 'Oral capsule', 'Oral solution'],
+            'metoprolol': ['Oral tablet', 'Oral solution', 'Oral suspension'],
+            'losartan': ['Oral tablet', 'Oral solution'],
+            'valsartan': ['Oral tablet', 'Oral suspension'],
+            'amlodipine': ['Oral tablet', 'Oral suspension']
+        }
+        
+        for pattern, forms in medication_patterns.items():
+            if pattern.lower() in medication_name.lower():
+                for form in forms:
+                    if form.lower() != current_dosage.lower() and form not in additional_forms:
+                        additional_forms.append(form)
+        
+        return additional_forms[:3]
+    
+    def extract_how_to_take_from_context(self, medication_name, dosage_forms):
+        instructions = []
+        
+        if 'Oral' in dosage_forms:
+            instructions.append('Oral')
+        if 'Injection' in dosage_forms:
+            instructions.append('Injection')
+        if 'Inhalation' in dosage_forms:
+            instructions.append('Inhalation')
+        if 'Topical' in dosage_forms:
+            instructions.append('Topical')
+        if 'Rectal' in dosage_forms:
+            instructions.append('Rectal')
+        if 'Ophthalmic' in dosage_forms:
+            instructions.append('Ophthalmic')
+        if 'Otic' in dosage_forms:
+            instructions.append('Otic')
+        if 'Nasal' in dosage_forms:
+            instructions.append('Nasal')
+        
+        if 'Oral' in dosage_forms:
+            if 'tablet' in dosage_forms.lower() or 'capsule' in dosage_forms.lower():
+                instructions.append('Swallow whole')
+            if 'liquid' in dosage_forms.lower() or 'suspension' in dosage_forms.lower():
+                instructions.append('Shake well')
+        
+        if 'Inhalation' in dosage_forms:
+            instructions.append('Prime inhaler')
+        
+        if 'Topical' in dosage_forms:
+            instructions.append('Apply to affected area')
+        
+        common_with_food = ['aspirin', 'ibuprofen', 'naproxen', 'diclofenac', 'metformin', 'metoprolol']
+        if any(med in medication_name.lower() for med in common_with_food):
+            instructions.append('Take with food')
+        
+        unique_instructions = []
+        seen = set()
+        for instruction in instructions:
+            if instruction not in seen:
+                seen.add(instruction)
+                unique_instructions.append(instruction)
+        
+        if unique_instructions:
+            if len(unique_instructions) == 1:
+                return unique_instructions[0]
+            else:
+                return " | ".join(unique_instructions[:3])
+        
+        return None
+    
+    def generate_reprocessing_statistics(self, df, dosage_enhanced, how_to_take_enhanced):
+        total_medications = len(df)
+        
+        brand_names_found = sum(1 for d in df['Brand Names'] if d != 'Not found')
+        multiple_brands = sum(1 for d in df['Brand Names'] if '|' in str(d))
+        dosage_forms_found = sum(1 for d in df['Dosage Forms'] if d != 'Not found')
+        multiple_dosage_forms = sum(1 for d in df['Dosage Forms'] if '|' in str(d))
+        how_to_take_found = sum(1 for d in df['How to Take'] if d != 'Not found')
+        when_to_take_found = sum(1 for d in df['When to Take'] if d != 'Not found')
+        
+        print(f"\n{'═'*70}")
+        print(f"{'📊 REPROCESSING RESULTS':^70}")
+        print(f"{'═'*70}")
+        
+        print(f"{'📋 Total Medications:':<30} {total_medications}")
+        print(f"{'✅ Brand Names Found:':<30} {brand_names_found} ({brand_names_found/total_medications*100:.1f}%)")
+        print(f"{'🔗 Multiple Brands:':<30} {multiple_brands}")
+        
+        print(f"\n{'💊 DOSAGE FORMS:':<30}")
+        print(f"{'  Forms Found:':<30} {dosage_forms_found} ({dosage_forms_found/total_medications*100:.1f}%)")
+        print(f"{'  Multiple Forms:':<30} {multiple_dosage_forms}")
+        print(f"{'  Enhanced:':<30} {dosage_enhanced}")
+        
+        print(f"\n{'📋 INSTRUCTIONS:':<30}")
+        print(f"{'  How to Take:':<30} {how_to_take_found} ({how_to_take_found/total_medications*100:.1f}%)")
+        print(f"{'  Enhanced:':<30} {how_to_take_enhanced}")
+        print(f"{'  When to Take:':<30} {when_to_take_found} ({when_to_take_found/total_medications*100:.1f}%)")
+        
+        quality_score = (brand_names_found + dosage_forms_found + how_to_take_found + when_to_take_found) / (total_medications * 4) * 100
+        print(f"\n🟢 Overall Data Quality: {quality_score:.1f}%")
+        print(f"{'═'*70}")
+        
+        if multiple_dosage_forms > 0:
+            self.print_section("EXAMPLES OF MULTIPLE DOSAGE FORMS")
+            count = 0
+            for _, row in df.iterrows():
+                if '|' in str(row['Dosage Forms']) and count < 10:
+                    self.print_info(f"{row['Medication Name']}: {row['Dosage Forms']}")
+                    count += 1
+        
+        if how_to_take_enhanced > 0:
+            self.print_section("EXAMPLES OF ENHANCED HOW TO TAKE")
+            count = 0
+            for _, row in df.iterrows():
+                if '|' in str(row['How to Take']) and count < 10:
+                    self.print_info(f"{row['Medication Name']}: {row['How to Take']}")
+                    count += 1
+    
+    def find_all_how_to_take_in_text(self, text):
+        """Find ALL possible how to take instructions in text"""
+        all_instructions = []
+        
+        # Enhanced patterns for comprehensive instruction extraction
+        enhanced_patterns = [
+            # Food-related instructions
+            r'(?:take|use|administer)\s+(?:with|without)\s+(?:food|meals)',
+            r'(?:take|use|administer)\s+(?:on\s+)?(?:empty|full)\s+(?:stomach)',
+            r'(?:with|without)\s+(?:food|meals)',
+            r'(?:on\s+)?(?:empty|full)\s+(?:stomach)',
+            
+            # Water and liquid instructions
+            r'(?:take|use)\s+(?:with|without)\s+(?:water|liquid)',
+            r'(?:with|without)\s+(?:water|liquid)',
+            r'(?:with\s+)?(?:a\s+)?(?:full\s+)?(?:glass\s+of\s+water)',
+            
+            # Swallowing instructions
+            r'swallow\s+(?:the\s+)?(?:tablet|capsule|pill)\s+(?:whole|with\s+water|with\s+food)',
+            r'swallow\s+(?:whole|with\s+water|with\s+food)',
+            r'(?:chew|crush|break)\s+(?:the\s+)?(?:tablet)',
+            
+            # Administration route instructions
+            r'(?:take|use)\s+(?:orally|by\s+mouth|sublingually|buccally)',
+            r'(?:oral|injection|inhalation|topical|sublingual|buccal)\s+(?:administration|use)',
+            
+            # Specific instruction patterns
+            r'how\s+to\s+(?:take|use):\s*([^,\n\r]+)',
+            r'instructions:\s*([^,\n\r]+)',
+            r'directions:\s*([^,\n\r]+)',
+            r'administration:\s*([^,\n\r]+)',
+            
+            # Dosage form specific instructions
+            r'(?:tablet|capsule|pill)\s+(?:should\s+be\s+)?(?:swallowed|chewed|crushed)',
+            r'(?:liquid|suspension|syrup)\s+(?:should\s+be\s+)?(?:shaken|measured)',
+            r'(?:inhaler|aerosol)\s+(?:should\s+be\s+)?(?:primed|shaken)',
+            r'(?:cream|ointment|gel)\s+(?:should\s+be\s+)?(?:applied|rubbed)',
+            
+            # Timing instructions
+            r'(?:take|use)\s+(?:at\s+)?(?:the\s+same\s+time|regular\s+intervals)',
+            r'(?:take|use)\s+(?:before|after|during)\s+(?:meals|food)',
+            r'(?:take|use)\s+(?:in\s+the\s+)?(?:morning|evening|bedtime)'
+        ]
+        
+        for pattern in enhanced_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            if matches:
+                for match in matches:
+                    if isinstance(match, tuple):
+                        match = match[0]
+                    cleaned = self.clean_text(match)
+                    if cleaned and len(cleaned) > 5:
+                        standardized = self.simplify_how_to_take(cleaned)
+                        if standardized not in all_instructions:
+                            all_instructions.append(standardized)
+        
+        # Look for specific instruction sections
+        instruction_sections = [
+            r'Available as:\s*([^,\n\r]+)',
+            r'Form[s]?:\s*([^,\n\r]+)',
+            r'Administration:\s*([^,\n\r]+)',
+            r'Instructions:\s*([^,\n\r]+)'
+        ]
+        
+        for pattern in instruction_sections:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                instruction_text = self.clean_text(match.group(1))
+                if instruction_text and len(instruction_text) > 5:
+                    standardized = self.simplify_how_to_take(instruction_text)
+                    if standardized not in all_instructions:
+                        all_instructions.append(standardized)
+        
+        return all_instructions
+    
+    def find_food_instructions(self, text):
+        """Find food-related administration instructions"""
+        food_patterns = [
+            r'(?:take|use|administer)\s+(?:with|without)\s+(?:food|meals)',
+            r'(?:take|use|administer)\s+(?:on\s+)?(?:empty|full)\s+(?:stomach)',
+            r'(?:with|without)\s+(?:food|meals)',
+            r'(?:on\s+)?(?:empty|full)\s+(?:stomach)',
+            r'(?:take|use)\s+(?:before|after|during)\s+(?:meals|food)'
+        ]
+        
+        food_instructions = []
+        for pattern in food_patterns:
+            matches = re.findall(pattern, text, re.IGNORECASE)
+            for match in matches:
+                if isinstance(match, tuple):
+                    match = match[0]
+                cleaned = self.clean_text(match)
+                if cleaned and len(cleaned) > 5:
+                    standardized = self.simplify_how_to_take(cleaned)
+                    if standardized not in food_instructions:
+                        food_instructions.append(standardized)
+        
+        return food_instructions
 
 def main():
-    scraper = MedicationScraper()
-    scraper.run()
+    if len(sys.argv) > 1:
+        command = sys.argv[1].lower()
+        
+        if command == "enhance":
+            scraper = MedicationScraper()
+            scraper.create_enhanced_professional_excel()
+        elif command == "scrape":
+            scraper = MedicationScraper()
+            scraper.run()
+        elif command == "help":
+            print("Available commands:")
+            print("  enhance - Create enhanced professional Excel with improved data")
+            print("  scrape  - Run full medication scraping process")
+            print("  help    - Show this help message")
+        else:
+            print(f"Unknown command: {command}")
+            print("Use 'help' to see available commands")
+    else:
+        scraper = MedicationScraper()
+        scraper.run()
 
 if __name__ == "__main__":
     main() 
