@@ -461,10 +461,11 @@ class MedlinePlusSideEffectsScraper:
         """Save final results to Excel file by properly updating the original file structure"""
         try:
             if output_file_path is None:
-                # Create output filename based on original
+                # Create output filename based on original in the Analysis folder
                 base_name = os.path.splitext(os.path.basename(original_file_path))[0]
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_file_path = f"{base_name}_WITH_SIDE_EFFECTS_{timestamp}.xlsx"
+                analysis_folder = os.path.dirname(original_file_path)
+                output_file_path = os.path.join(analysis_folder, f"{base_name}_WITH_SIDE_EFFECTS_{timestamp}.xlsx")
             
             # Load original Excel file to preserve structure
             original_df = pd.read_excel(original_file_path)
