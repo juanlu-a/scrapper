@@ -458,7 +458,7 @@ class MedlinePlusSideEffectsScraper:
             self.print_warning(f"Could not save progress: {e}")
     
     def save_final_results(self, medications_df, original_file_path, output_file_path):
-        """Save final results to Excel file by properly updating the original file structure"""
+        """Save final results to Excel file by properly updating the original file structure and preserving formatting"""
         try:
             if output_file_path is None:
                 # Create output filename based on original in the Analysis folder
@@ -467,74 +467,147 @@ class MedlinePlusSideEffectsScraper:
                 analysis_folder = os.path.dirname(original_file_path)
                 output_file_path = os.path.join(analysis_folder, f"{base_name}_WITH_SIDE_EFFECTS_{timestamp}.xlsx")
             
-            # Load original Excel file to preserve structure
-            original_df = pd.read_excel(original_file_path)
+            # Load original Excel file using openpyxl to preserve exact structure AND formatting
+            import openpyxl
+            from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+            wb = openpyxl.load_workbook(original_file_path)
+            ws = wb.active
             
-            # Find where medication data starts
-            medication_start_idx = None
-            for idx, row in original_df.iterrows():
-                if str(row.iloc[0]).strip() == "Medication Name":
-                    medication_start_idx = idx
+            # Find the medication data header row
+            header_row = None
+            for row in range(1, 20):
+                cell_value = ws.cell(row=row, column=1).value
+                if cell_value == "Medication Name":
+                    header_row = row
                     break
             
-            if medication_start_idx is not None:
-                # Create a copy of the original dataframe to modify
-                result_df = original_df.copy()
+            if header_row is None:
+                self.print_error("Could not find medication header row")
+                return
                 
-                # Add the "Side Effects" column if it doesn't exist
-                if result_df.shape[1] < 6:
-                    # Add a new column for side effects
-                    result_df['Unnamed: 5'] = None
+            self.print_info(f"Found medication headers at row {header_row}")
+            
+            # Add "Side Effects" header to column 7 (preserving Disease Tag in column 6)
+            header_cell = ws.cell(row=header_row, column=7, value="Side Effects")
+            
+            # Copy formatting from adjacent header cell (column 6) to maintain consistency
+            ref_cell = ws.cell(row=header_row, column=6)
+            if ref_cell.font:
+                header_cell.font = Font(
+                    name=ref_cell.font.name,
+                    size=ref_cell.font.size,
+                    bold=ref_cell.font.bold,
+                    italic=ref_cell.font.italic,
+                    color=ref_cell.font.color
+                )
+            if ref_cell.fill and hasattr(ref_cell.fill, 'start_color'):
+                header_cell.fill = PatternFill(
+                    start_color=ref_cell.fill.start_color,
+                    end_color=ref_cell.fill.end_color,
+                    fill_type=ref_cell.fill.fill_type
+                )
+            if ref_cell.border:
+                header_cell.border = Border(
+                    left=ref_cell.border.left,
+                    right=ref_cell.border.right,
+                    top=ref_cell.border.top,
+                    bottom=ref_cell.border.bottom
+                )
+            if ref_cell.alignment:
+                header_cell.alignment = Alignment(
+                    horizontal=ref_cell.alignment.horizontal,
+                    vertical=ref_cell.alignment.vertical,
+                    wrap_text=ref_cell.alignment.wrap_text
+                )
+            
+            # Create a mapping of medication names to side effects
+            side_effects_mapping = {}
+            for idx, row in medications_df.iterrows():
+                med_name = str(row.get('Medication Name', '')).strip().lower()
+                side_effects = str(row.get('Side Effects', 'No side effects information found.'))
+                if med_name and med_name != 'nan':
+                    side_effects_mapping[med_name] = side_effects
+            
+            # Update each medication row with side effects (add to new column 7)
+            medications_processed = 0
+            side_effects_added = 0
+            
+            for row in range(header_row + 1, ws.max_row + 1):
+                medication_name = ws.cell(row=row, column=1).value
+                
+                if not medication_name or pd.isna(medication_name):
+                    continue
                     
-                    # Set the header for the side effects column
-                    result_df.iloc[medication_start_idx, 5] = 'Side Effects'
+                medication_name = str(medication_name).strip()
                 
-                # Create a mapping of medication names to side effects
-                side_effects_mapping = {}
-                for idx, row in medications_df.iterrows():
-                    med_name = str(row.get('Medication Name', '')).strip()
-                    side_effects = str(row.get('Side Effects', 'No side effects information found.'))
-                    if med_name and med_name != 'nan':
-                        side_effects_mapping[med_name] = side_effects
-                
-                # Update the original file structure with side effects
-                medications_processed = 0
-                side_effects_added = 0
-                
-                for idx in range(medication_start_idx + 1, len(result_df)):
-                    medication_name = str(result_df.iloc[idx, 0]).strip()
+                # Skip summary/header rows
+                if medication_name.startswith('📊') or medication_name.startswith('📋') or medication_name.startswith('📈'):
+                    continue
                     
-                    # Skip empty rows or non-medication rows
-                    if pd.isna(medication_name) or medication_name == 'nan' or medication_name == '':
-                        continue
-                        
-                    # Skip summary rows
-                    if medication_name.startswith('📊') or medication_name.startswith('📋') or medication_name.startswith('📈'):
-                        continue
-                        
-                    medications_processed += 1
-                    
-                    # Look up side effects
-                    side_effects = side_effects_mapping.get(medication_name, "No side effects information found.")
-                    
-                    # Add side effects to the new column
-                    result_df.iloc[idx, 5] = side_effects
-                    
-                    if side_effects != "No side effects information found.":
-                        side_effects_added += 1
+                medications_processed += 1
                 
-                # Save the updated file
-                result_df.to_excel(output_file_path, index=False, header=False)
+                # Look up side effects (case insensitive)
+                side_effects = side_effects_mapping.get(medication_name.lower(), "No side effects information found.")
                 
-                self.print_success(f"Final results saved to: {output_file_path}")
-                self.print_info(f"📊 Total medications processed: {medications_processed}")
-                self.print_info(f"💊 Side effects added: {side_effects_added}")
-                self.print_info(f"📈 Success rate: {side_effects_added/medications_processed*100:.1f}%")
+                # Add side effects to column 7 (new column, preserving Disease Tag in column 6)
+                side_effects_cell = ws.cell(row=row, column=7, value=side_effects)
                 
-            else:
-                # If structure is different, just save the medications data
-                medications_df.to_excel(output_file_path, index=False)
-                self.print_warning("Could not find original structure, saved medications data only")
+                # Copy formatting from adjacent data cell (column 6) to maintain consistency
+                reference_cell = ws.cell(row=row, column=6)
+                if reference_cell.font:
+                    side_effects_cell.font = Font(
+                        name=reference_cell.font.name,
+                        size=reference_cell.font.size,
+                        bold=reference_cell.font.bold,
+                        italic=reference_cell.font.italic,
+                        color=reference_cell.font.color
+                    )
+                if reference_cell.fill and hasattr(reference_cell.fill, 'start_color'):
+                    side_effects_cell.fill = PatternFill(
+                        start_color=reference_cell.fill.start_color,
+                        end_color=reference_cell.fill.end_color,
+                        fill_type=reference_cell.fill.fill_type
+                    )
+                if reference_cell.border:
+                    side_effects_cell.border = Border(
+                        left=reference_cell.border.left,
+                        right=reference_cell.border.right,
+                        top=reference_cell.border.top,
+                        bottom=reference_cell.border.bottom
+                    )
+                if reference_cell.alignment:
+                    side_effects_cell.alignment = Alignment(
+                        horizontal=reference_cell.alignment.horizontal,
+                        vertical=reference_cell.alignment.vertical,
+                        wrap_text=True  # Enable text wrapping for long side effects
+                    )
+                
+                if side_effects != "No side effects information found.":
+                    side_effects_added += 1
+            
+            # Save the updated workbook
+            wb.save(output_file_path)
+            
+            # Auto-adjust column width for the new Side Effects column
+            try:
+                # Set a reasonable width for the Side Effects column (column G/7)
+                ws.column_dimensions['G'].width = 50  # Adjust width as needed
+                wb.save(output_file_path)  # Save again with column width
+            except Exception as e:
+                self.print_warning(f"Could not adjust column width: {e}")
+            
+            self.print_success(f"Final results saved to: {output_file_path}")
+            self.print_info(f"📊 Total medications processed: {medications_processed}")
+            self.print_info(f"💊 Side effects added: {side_effects_added}")
+            self.print_info(f"📈 Success rate: {side_effects_added/medications_processed*100:.1f}%")
+            self.print_info(f"✅ Disease Tag column preserved in column 6")
+            self.print_info(f"✅ Side Effects added in new column 7")
+            self.print_info(f"🎨 Original formatting preserved")
+            
+            # Clean up temporary files after successful completion
+            self.cleanup_temporary_files()
+            
+            return output_file_path
             
         except Exception as e:
             self.print_error(f"Error saving final results: {e}")
@@ -543,6 +616,49 @@ class MedlinePlusSideEffectsScraper:
             medications_df.to_excel(fallback_file, index=False)
             self.print_warning(f"Saved fallback file: {fallback_file}")
     
+    def cleanup_temporary_files(self):
+        """Clean up temporary files after successful completion"""
+        try:
+            files_deleted = 0
+            
+            # Delete progress files
+            import glob
+            progress_files = glob.glob("medication_side_effects_progress_*.xlsx")
+            for file in progress_files:
+                try:
+                    os.remove(file)
+                    files_deleted += 1
+                    self.print_info(f"🗑️ Deleted progress file: {file}")
+                except Exception as e:
+                    self.print_warning(f"Could not delete {file}: {e}")
+            
+            # Delete fallback files
+            fallback_files = glob.glob("medication_side_effects_fallback_*.xlsx")
+            for file in fallback_files:
+                try:
+                    os.remove(file)
+                    files_deleted += 1
+                    self.print_info(f"🗑️ Deleted fallback file: {file}")
+                except Exception as e:
+                    self.print_warning(f"Could not delete {file}: {e}")
+            
+            # Delete cache file
+            if os.path.exists(self.cache_file):
+                try:
+                    os.remove(self.cache_file)
+                    files_deleted += 1
+                    self.print_info(f"🗑️ Deleted cache file: {self.cache_file}")
+                except Exception as e:
+                    self.print_warning(f"Could not delete cache file: {e}")
+            
+            if files_deleted > 0:
+                self.print_success(f"🧹 Cleanup completed: {files_deleted} temporary files deleted")
+            else:
+                self.print_info("🧹 No temporary files to clean up")
+                
+        except Exception as e:
+            self.print_warning(f"Error during cleanup: {e}")
+
     def cleanup(self):
         """Clean up resources"""
         try:
@@ -557,7 +673,7 @@ def main():
     print(f"{Fore.CYAN}Starting side effects extraction process...{Style.RESET_ALL}")
     
     # Configuration
-    excel_file_path = "/Users/juanlu/Documents/Wye/scrapper/Analysis/medication_data_20250820_141750.xlsx"
+    excel_file_path = "/Users/juanlu/Documents/Wye/scrapper/Analysis/medication_data_20250821_164933_FINAL_ENHANCED.xlsx"
     output_file_path = None  # Will be auto-generated
     headless = False  # Set to True for headless browsing
     
@@ -571,7 +687,8 @@ def main():
         
         print(f"\n{Fore.GREEN}{Style.BRIGHT}✅ Successfully completed side effects extraction!")
         print(f"{Fore.CYAN}📊 Processed {len(results_df)} medications")
-        print(f"{Fore.CYAN}💾 Results saved to Excel file{Style.RESET_ALL}")
+        print(f"{Fore.CYAN}💾 Results saved to Excel file")
+        print(f"{Fore.CYAN}🧹 Temporary files cleaned up{Style.RESET_ALL}")
         
     except KeyboardInterrupt:
         print(f"\n{Fore.YELLOW}⚠️ Process interrupted by user{Style.RESET_ALL}")
